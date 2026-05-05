@@ -1,0 +1,50 @@
+{
+  "name": "@lapis-lang/derivative-parser",
+  "version": "1.0.0",
+  "description": "A derivative-based parser library",
+  "type": "module",
+  "main": "./dist/index.mjs",
+  "types": "./dist/index.d.mts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "import": "./dist/index.mjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "lint": "eslint .",
+    "test": "tsc -p tsconfig.test.json && node --test \"dist-test/test/**/*.test.mjs\"",
+    "example": "tsc -p tsconfig.test.json && node dist-test/examples/arith-demo.mjs",
+    "bench": "tsc -p tsconfig.test.json && node --stack-size=8192 dist-test/examples/scaling-bench.mjs",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "parser",
+    "parsing",
+    "derivative",
+    "brzozowski",
+    "context-free-grammar",
+    "executable-grammar"
+  ],
+  "author": "Michael L Haufe <tno@thenewobjective.com>",
+  "license": "MPL-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lapis-lang/derivative-parser.git"
+  },
+  "bugs": {
+    "url": "https://github.com/lapis-lang/derivative-parser/issues"
+  },
+  "homepage": "https://github.com/lapis-lang/derivative-parser#readme",
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^25.6.0",
+    "eslint": "^10.2.1",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.59.1"
+  }
+}
