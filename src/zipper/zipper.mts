@@ -41,12 +41,17 @@ const P_BOTTOM: Pos = freshPos();
 /* ─── Tokens ─────────────────────────────────────────────────────────── */
 
 /**
- * Tokens are `(tag, sym)`. `tag` is a string used for equality
- * (a single character in our test setup); `sym` is a human-readable label.
+ * Tokens are `(tag, sym, offset)`. `tag` is a string used for equality
+ * (a single character in our test setup); `sym` is a human-readable label;
+ * `offset` is the 0-based character position in the source string.
+ * Pattern tokens (inside `TokExp` / `PredTokExp`) use `offset: -1`.
  */
-export type Tok = { readonly tag: string; readonly sym: string };
+export type Tok = { readonly tag: string; readonly sym: string; readonly offset: number };
 
-const T_EOF: Tok = { tag: '\u0000<EOF>', sym: '<EOF>' };
+/** Half-open character span `[start, end)` in the source string. */
+export type Span = { readonly start: number; readonly end: number };
+
+const T_EOF: Tok = { tag: '\u0000<EOF>', sym: '<EOF>', offset: -1 };
 const S_BOTTOM = '<s_bottom>';
 
 /* ─── Mem ────────────────────────────────────────────────────────────── */
@@ -181,10 +186,10 @@ export class EmptyExp extends Exp {
 export class RedExp<A = unknown, B = unknown> extends Exp {
     constructor(
         readonly inner: Exp,
-        readonly fn: (a: A) => B,
+        readonly fn: (a: A, span: Span) => B,
     ) { super(); }
     descend(driver: ZipperDriver, m: Mem): void {
-        this.inner.goDown(driver, new RedCxt(m, this.fn as (a: unknown) => unknown));
+        this.inner.goDown(driver, new RedCxt(m, this.fn as (a: unknown, span: Span) => unknown));
     }
 }
 
@@ -263,10 +268,12 @@ export class AltCxt extends Cxt {
 export class RedCxt extends Cxt {
     constructor(
         readonly m: Mem,
-        readonly fn: (a: unknown) => unknown,
+        readonly fn: (a: unknown, span: Span) => unknown,
     ) { super(); }
     goUp(driver: ZipperDriver, value: unknown): void {
-        driver.completeAt(this.m, this.fn(value));
+        const start = driver.posToOffset.get(this.m.startPos) ?? 0;
+        const end = driver.posToOffset.get(driver.pos) ?? start;
+        driver.completeAt(this.m, this.fn(value, { start, end }));
     }
 }
 
@@ -288,6 +295,8 @@ export class ZipperDriver {
     currentToken: Tok = T_EOF;
     /** When true, only track whether a value was produced (not all values). */
     recognizeOnly = false;
+    /** Maps each Pos sentinel to its 0-based character offset in the source. */
+    readonly posToOffset = new Map<Pos, number>();
 
     /**
      * Mark `mem` complete with `value` at the current position; flow upward.
@@ -312,7 +321,9 @@ export class ZipperDriver {
         this.worklist = [];
         this.topValues = [];
         for (const { mem, value } of w) this.completeAt(mem, value);
-        this.pos = freshPos();
+        const next = freshPos();
+        this.posToOffset.set(next, token.offset + 1);
+        this.pos = next;
     }
 
     /**
@@ -342,7 +353,10 @@ export class ZipperDriver {
 
     private _init(start: Exp): void {
         this.topValues = [];
-        this.pos = freshPos();
+        this.posToOffset.clear();
+        const initialPos = freshPos();
+        this.posToOffset.set(initialPos, 0);
+        this.pos = initialPos;
         this.currentToken = T_EOF;
         // Bootstrap: create a top-level Mem whose parent will collect the result,
         // and a SeqCxt that, when the first step() fires, will descend into `start`.

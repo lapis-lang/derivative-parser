@@ -15,6 +15,7 @@ import {
     RedExp,
     SeqExp,
     type Exp,
+    type Span,
 } from './zipper/zipper.mjs';
 
 export class Parser<T> {
@@ -27,8 +28,12 @@ export class Parser<T> {
 
     /* ---- semantic action ---- */
 
-    /** Apply `fn` to every parse tree this parser produces. */
-    map<U>(fn: (t: T) => U): Parser<U> {
+    /** Apply `fn` to every parse tree this parser produces.
+     *
+     * `fn` receives the parse-tree value and a `Span` describing the
+     * half-open `[start, end)` character offsets in the source string.
+     */
+    map<U>(fn: (t: T, span: Span) => U): Parser<U> {
         return new Parser<U>(new RedExp<T, U>(this._exp, fn));
     }
 

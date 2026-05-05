@@ -82,10 +82,70 @@ The shape generalises the Pratt-parser `Grammar<T>` pattern (one global result
 type) to per-production result types while keeping subclass overrides
 type-safe.
 
+## Context-sensitive (parameterised) grammars
+
+When a production depends on runtime context — such as the current
+indentation depth — declare it as a `@rule` **method** instead of a getter.
+The decorator caches a separate `DelayedExp` slot per `(instance, method,
+arguments)` tuple, so calling `this.block(2)` and `this.block(4)` creates
+two independent, mutually-recursive parser nodes:
+
+```ts
+class IndentLang extends Grammar<{ doc: Node[] }> {
+    override start() { return this.block(0); }
+
+    @rule block(depth: number): Parser<Node[]> {
+        return this.seq(this.line(depth), this.block(depth).opt())
+            .map(([first, rest]) => [first, ...(rest ?? [])]);
+    }
+
+    @rule line(depth: number): Parser<Node> {
+        // leaf:   <spaces> key ": " value "\n"
+        const leaf = this.seq(this.spaces(depth), this.key, this.literal(': '), this.value, this.char('\n'))
+            .map(([, k, , v]) => ({ kind: 'leaf' as const, key: k, value: v }));
+        // branch: <spaces> key ":\n" <nested block>
+        const branch = this.seq(this.spaces(depth), this.key, this.literal(':\n'), this.block(depth + 2))
+            .map(([, k, , children]) => ({ kind: 'branch' as const, key: k, children }));
+        return this.or(branch, leaf);
+    }
+
+    @rule spaces(n: number): Parser<string> {
+        if (n === 0) return this.epsilon('');
+        return this.seq(this.char(' '), this.spaces(n - 1)).map(() => '');
+    }
+}
+```
+
+See [examples/indent.mts](examples/indent.mts) for the full working example,
+including `key` and `value` productions.
+
+## Source positions
+
+Every `.map()` callback receives a `Span` as its second argument describing
+the half-open character-offset range `[start, end)` of the matched input:
+
+```ts
+import type { Span } from '@lapis-lang/derivative-parser';
+
+interface Node { text: string; span: Span }
+
+const word = grammar.word.map(
+    (text, span): Node => ({ text, span })
+    //              ^^^^ { start: number; end: number }
+);
+```
+
+`start` is the 0-based offset of the first character consumed by the
+production; `end` is the offset *after* the last character (so `end - start`
+is the length of the matched region). Callbacks that only need the value can
+still use a single-parameter arrow function — the extra argument is simply
+ignored.
+
 ## API
 
 ```ts
 import { Grammar, Parser } from '@lapis-lang/derivative-parser';
+import type { Span } from '@lapis-lang/derivative-parser';
 ```
 
 ### `Grammar<S>` — abstract base
@@ -104,9 +164,13 @@ Subclass and define productions as `@rule` getters (or methods) returning
 | `seq(...parsers)`                   | Variadic concatenation; returns tuple.     |
 | `parse(input)` / `recognize(input)` | Drivers — full forest / boolean.           |
 
-The `@rule` decorator wraps a getter or method so each instance returns the
-same `Parser` (backed by a `DelayedExp`) per `(this, getter)` slot, making
-the grammar graph properly recursive without manual thunks.
+The `@rule` decorator can wrap either a **getter** or a **method**:
+- `@rule get foo()` — memoised per instance; the canonical form for
+  non-parameterised productions.
+- `@rule foo(arg)` — memoised per `(instance, arg)`; use this for
+  context-sensitive productions such as `block(depth)` or `expr(prec)`.
+  Each distinct argument set gets its own `DelayedExp` slot, so recursive
+  calls with the same argument thread through the same shared node.
 
 ### `Parser<T>` — fluent algebra
 
@@ -114,7 +178,7 @@ the grammar graph properly recursive without manual thunks.
 | ----------- | ----------------------------------------------- |
 | `or(other)` | A ∪ B                                           |
 | `then(other)`| A ○ B — parse trees are pairs `[T, U]`.        |
-| `map(f)`    | Semantic action / reduction.                    |
+| `map(f)`    | Semantic action. `f` receives `(value: T, span: Span)` where `Span = { start: number; end: number }` is the half-open character-offset range `[start, end)` of the matched input. |
 | `many()`    | A\* — parse trees are arrays `T[]`.             |
 | `opt()`     | A ∪ ε — parse trees are `T \| undefined`.       |
 
@@ -183,6 +247,7 @@ examples/
   arith.mts           — shape-typed arithmetic + Bracha-style override
   arith-demo.mts      — runnable demo
   csv.mts             — CSV parser example
+  indent.mts          — significant-whitespace (indentation-sensitive) grammar; demonstrates @rule methods (parameterised productions) and Span offsets
   json.mts            — JSON parser example
   lambda.mts          — lambda-calculus parser example
   scaling-bench.mts   — PwZ scaling benchmark

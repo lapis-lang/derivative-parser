@@ -32,6 +32,7 @@ import {
     TokExp,
     ZipperDriver,
     type Tok,
+    type Span,
 } from './zipper/zipper.mjs';
 import { treeKey } from './parser/fix.mjs';
 
@@ -80,7 +81,7 @@ export abstract class Grammar<S extends GrammarShape = GrammarShape> {
 
     /** A literal character. */
     protected char(c: string): Parser<string> {
-        return new Parser<string>(new TokExp({ tag: c, sym: c }));
+        return new Parser<string>(new TokExp({ tag: c, sym: c, offset: -1 }));
     }
 
     /** A character matching a predicate. */
@@ -94,7 +95,7 @@ export abstract class Grammar<S extends GrammarShape = GrammarShape> {
         const chars = [...s];
         const seq = new SeqExp(
             `_lit_${s}`,
-            chars.map((c) => new TokExp({ tag: c, sym: c })),
+            chars.map((c) => new TokExp({ tag: c, sym: c, offset: -1 })),
             () => s,
         );
         return new Parser<string>(seq);
@@ -138,7 +139,8 @@ export abstract class Grammar<S extends GrammarShape = GrammarShape> {
 
     private _toTokens(input: Iterable<string>): Tok[] {
         const tokens: Tok[] = [];
-        for (const c of input) tokens.push({ tag: c, sym: c });
+        let offset = 0;
+        for (const c of input) tokens.push({ tag: c, sym: c, offset: offset++ });
         return tokens;
     }
 
