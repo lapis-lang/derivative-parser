@@ -2,7 +2,7 @@
 
 A TypeScript implementation of **Parsing with Zippers** (Darragh & Adams,
 ICFP 2020) with full semantic actions, an object-oriented front-end inspired
-by Bracha's *executable grammars* and Magi's Pratt parser.
+by Bracha's *executable grammars*.
 
 Grammars are written as **classes**; productions are methods. Recursion —
 including left-recursion and ambiguity — is handled by lazy references and
@@ -78,7 +78,7 @@ class MathAST  extends AbstractMath<{ expr: Exp; term: Exp; factor: Exp }> {
 }
 ```
 
-The shape generalises the Pratt-parser `Grammar<T>` pattern (one global result
+The shape generalises the single-type `Grammar<T>` pattern (one global result
 type) to per-production result types while keeping subclass overrides
 type-safe.
 
@@ -168,7 +168,7 @@ The `@rule` decorator can wrap either a **getter** or a **method**:
 - `@rule get foo()` — memoised per instance; the canonical form for
   non-parameterised productions.
 - `@rule foo(arg)` — memoised per `(instance, arg)`; use this for
-  context-sensitive productions such as `block(depth)` or `expr(prec)`.
+  context-sensitive productions such as `block(depth)`.
   Each distinct argument set gets its own `DelayedExp` slot, so recursive
   calls with the same argument thread through the same shared node.
 

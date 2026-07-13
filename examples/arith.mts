@@ -1,5 +1,5 @@
 /**
- * Shape-typed arithmetic grammar — Magi/Bracha "executable grammar" pattern.
+ * Shape-typed arithmetic grammar — Bracha "executable grammar" pattern.
  *
  *   `AbstractMath<S>` declares the structure of `expr`, `term`, `factor`
  *   along with abstract semantic-action methods (`add`, `mul`, `num`).

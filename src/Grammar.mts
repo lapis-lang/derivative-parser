@@ -17,7 +17,7 @@
  *   }
  *
  * The optional shape parameter `S` maps production names to their parse-tree
- * types — see `examples/` for the Magi/Bracha-style abstract grammar +
+ * types — see `examples/` for the Bracha-style abstract grammar +
  * concrete subclass pattern.
  */
 
@@ -48,7 +48,7 @@ export abstract class Grammar<S extends GrammarShape = GrammarShape> {
 
     /**
      * Per-instance, per-method, per-arg-key cache for parameterised
-     * `@rule` methods (Pratt-style productions, etc.).
+     * `@rule` methods (context-sensitive productions, etc.).
      */
     private readonly _paramRuleCache = new WeakMap<object, Map<string, Parser<unknown>>>();
 
@@ -167,7 +167,7 @@ export abstract class Grammar<S extends GrammarShape = GrammarShape> {
 /* ─── @rule decorator (TS5 stage-3) ──────────────────────────────────────
  *
  * A more ergonomic alternative to the stored-arrow `rule(body)` pattern.
- * Inspired by Bracha's `RunnableGrammar` / `ExecutableGrammar` (Magi),
+ * Inspired by Bracha's `RunnableGrammar` / `ExecutableGrammar`,
  * but implemented with native decorators rather than mirrors / proxies.
  *
  *   class Math extends Grammar<{ expr: number; ... }> {
@@ -186,7 +186,7 @@ export abstract class Grammar<S extends GrammarShape = GrammarShape> {
  *   `DelayedExp`), cached per `(this, getter)`, making the grammar graph
  *   properly recursive without manual thunks.
  *
- * **Method form** (Pratt-style, parameterised productions):
+ * **Method form** (parameterised productions):
  *
  *   @rule expr(min: number): Parser<...> { ... }
  *
