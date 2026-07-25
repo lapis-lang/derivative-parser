@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 460 200" font-family="sans-serif" font-size="13">
+  <title>Without memoization: exponential re-exploration</title>
+  <rect x="10" y="10" width="440" height="180" fill="none" stroke="#dadce0" stroke-dasharray="4 3"/>
+  <text x="20" y="28" fill="#5f6368">Without memoization: exponential</text>
+  <rect x="30" y="50" width="180" height="40" rx="6" fill="#fff" stroke="#5f6368"/>
+  <text x="120" y="75" text-anchor="middle">Zipper 1 at node S, pos 3</text>
+  <rect x="250" y="50" width="180" height="40" rx="6" fill="#fff" stroke="#5f6368"/>
+  <text x="340" y="75" text-anchor="middle">Zipper 2 at node S, pos 3</text>
+  <rect x="40" y="130" width="160" height="40" rx="6" fill="#fce8e6" stroke="#d93025"/>
+  <text x="120" y="155" text-anchor="middle">Re-explore S (wasted)</text>
+  <rect x="260" y="130" width="160" height="40" rx="6" fill="#fce8e6" stroke="#d93025"/>
+  <text x="340" y="155" text-anchor="middle">Re-explore S (wasted)</text>
+  <line x1="120" y1="90" x2="120" y2="130" stroke="#d93025"/>
+  <line x1="340" y1="90" x2="340" y2="130" stroke="#d93025"/>
+</svg>

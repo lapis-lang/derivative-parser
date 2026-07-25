@@ -299,33 +299,13 @@ results. If two people arrive at the same room at the same time, they
 
 Grammar: `S ::= 'a' 'b'` (match the string `"ab"`)
 
-```mermaid
-graph TD
-    Seq["Seq (sequence)"]
-    A["Tok('a')"]
-    B["Tok('b')"]
-    Seq --> A
-    Seq --> B
-```
+![Grammar tree for S ::= 'a' 'b'](docs/diagrams/tiny-grammar.svg)
 
 **Step 1 — input `'a'`:** the zipper descends into `Seq` → first child
 `Tok('a')`. The token matches → **completes** with value `"a"`, goes **up**
 to `Seq`, which advances to the next child `Tok('b')`.
 
-```mermaid
-graph LR
-    subgraph "Grammar tree"
-    Seq["Seq"]
-    A["Tok('a') ✓"]
-    B["Tok('b')"]
-    Seq --> A
-    Seq --> B
-    end
-    subgraph "Zipper"
-    Z1["📍 at Tok('b')<br/>accumulated: ['a']"]
-    end
-    Z1 -.-> B
-```
+![Step 1 — input 'a': zipper at Tok('b'), accumulated ['a']](docs/diagrams/step1-zipper.svg)
 
 **Step 2 — input `'b'`:** the zipper is at `Tok('b')`. The token matches →
 **completes** with value `"b"`, goes **up** to `Seq` — no more children →
@@ -338,22 +318,9 @@ graph LR
 Grammar: `S ::= S '+' S | '1'` (match `"1+1+1"` — two valid parse trees).
 Multiple zippers explore different branches *simultaneously*:
 
-```mermaid
-graph LR
-    subgraph "Step 1 (input '1')"
-    Z1["📍 Branch A<br/>→ Tok('1')"]
-    Z2["📍 Branch B<br/>→ S (recursive)"]
-    end
-```
+![Ambiguity step 1 — two branches explore simultaneously](docs/diagrams/ambiguity-step1.svg)
 
-```mermaid
-graph LR
-    subgraph "Step 2 (input '+')"
-    Z1["📍 Branch A<br/>matched '+',<br/>now at right S"]
-    Z2["📍 Branch B<br/>still exploring..."]
-    Z3["📍 Branch C<br/>another path"]
-    end
-```
+![Ambiguity step 2 — three branches after input '+'](docs/diagrams/ambiguity-step2.svg)
 
 Each zipper carries its own accumulated value. At the end, all zippers that
 reach the exit produce a **parse forest** — one tree per valid parse.
@@ -363,26 +330,9 @@ reach the exit produce a **parse forest** — one tree per valid parse.
 When two zippers reach the **same grammar node** at the **same input
 position**, they don't re-explore — they share:
 
-```mermaid
-graph TD
-    subgraph "Without memoization: exponential"
-    Z1["Zipper 1 at node S, pos 3"]
-    Z2["Zipper 2 at node S, pos 3"]
-    Z1 --> R1["Re-explore S (wasted)"]
-    Z2 --> R2["Re-explore S (wasted)"]
-    end
-```
+![Without memoization: exponential re-exploration](docs/diagrams/no-memo.svg)
 
-```mermaid
-graph TD
-    subgraph "With PwZ memoization: polynomial"
-    Z1["Zipper 1 at node S, pos 3"]
-    Z2["Zipper 2 at node S, pos 3"]
-    Z1 --> M["Shared Mem (explored once)"]
-    Z2 --> M
-    M --> R["Result reused by both"]
-    end
-```
+![With PwZ memoization: polynomial — shared exploration](docs/diagrams/with-memo.svg)
 
 This is what makes PwZ **polynomial time** on ambiguous grammars — the
 sharing prevents exponential blowup. The `Mem` object is the "shared
@@ -395,15 +345,7 @@ reuses the already-computed values.
 Traditional top-down parsers choke on left recursion (`S ::= S '+' S | '1'`)
 because `S` calls `S` infinitely. PwZ handles it because of memoization:
 
-```mermaid
-graph LR
-    subgraph "Left recursion in PwZ"
-    S1["S called at pos 0<br/>→ creates Mem (empty)"]
-    S1 --> S2["S calls S again at pos 0<br/>→ same Mem! Not re-explored"]
-    S2 --> S3["S falls through to '1'<br/>→ Mem now has result"]
-    S3 --> S4["S called again at pos 0<br/>→ Mem has result, reuses it"]
-    end
-```
+![Left recursion in PwZ — memo seeds and grows](docs/diagrams/left-recursion.svg)
 
 The first visit creates an (empty) memo. The recursive call hits the same
 memo — it doesn't loop infinitely, it just waits. When the base case (`'1'`)
@@ -413,27 +355,7 @@ parse progresses.
 
 ### Summary
 
-```mermaid
-graph TB
-    Input["Input: 'a', 'b', 'c', ..."]
-    Step["step(token) — one per character"]
-    Worklist["Worklist of zippers<br/>(one per parse branch)"]
-    Descend["Descend: go deeper<br/>into grammar tree"]
-    Match["Match: token vs grammar node"]
-    Complete["Complete: go up to parent<br/>with semantic value"]
-    Memo["Memo: same node + same pos?<br/>→ share results"]
-    Forest["Parse forest:<br/>all zippers that exit"]
-
-    Input --> Step
-    Step --> Worklist
-    Worklist --> Descend
-    Descend --> Match
-    Match -->|match| Complete
-    Match -->|no match| Dead["Dead end: zipper removed"]
-    Complete --> Memo
-    Memo --> Worklist
-    Complete -->|all children done| Forest
-```
+![PwZ summary: the step loop](docs/diagrams/summary-loop.svg)
 
 PwZ in a nutshell: **cursors walking a tree, sharing notes, handling
 ambiguity and left recursion through memoization**. The rest (semantic

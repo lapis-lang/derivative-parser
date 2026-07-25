@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 460" font-family="sans-serif" font-size="13">
+  <title>PwZ summary: the step loop</title>
+  <!-- Input -->
+  <rect x="180" y="10" width="160" height="40" rx="6" fill="#e8f0fe" stroke="#1a73e8"/>
+  <text x="260" y="35" text-anchor="middle">Input: 'a', 'b', 'c', ...</text>
+  <!-- Step -->
+  <rect x="180" y="80" width="160" height="40" rx="6" fill="#fff" stroke="#5f6368"/>
+  <text x="260" y="105" text-anchor="middle">step(token) — one per char</text>
+  <!-- Worklist -->
+  <rect x="160" y="150" width="200" height="40" rx="6" fill="#fff" stroke="#5f6368"/>
+  <text x="260" y="175" text-anchor="middle">Worklist of zippers (per branch)</text>
+  <!-- Descend -->
+  <rect x="160" y="220" width="200" height="40" rx="6" fill="#fff" stroke="#5f6368"/>
+  <text x="260" y="245" text-anchor="middle">Descend: go deeper into grammar</text>
+  <!-- Match -->
+  <rect x="160" y="290" width="200" height="40" rx="6" fill="#fef7e0" stroke="#f9ab00"/>
+  <text x="260" y="315" text-anchor="middle">Match: token vs grammar node</text>
+  <!-- Dead end -->
+  <rect x="400" y="290" width="110" height="40" rx="6" fill="#fce8e6" stroke="#d93025"/>
+  <text x="455" y="315" text-anchor="middle">Dead end</text>
+  <!-- Complete -->
+  <rect x="160" y="360" width="200" height="40" rx="6" fill="#e6f4ea" stroke="#188038"/>
+  <text x="260" y="385" text-anchor="middle">Complete: go up with value</text>
+  <!-- Memo -->
+  <rect x="160" y="420" width="200" height="36" rx="6" fill="#e8f0fe" stroke="#1a73e8"/>
+  <text x="260" y="443" text-anchor="middle">Memo: same node + pos → share</text>
+  <!-- edges -->
+  <line x1="260" y1="50" x2="260" y2="80" stroke="#5f6368" marker-end="url(#arr)"/>
+  <line x1="260" y1="120" x2="260" y2="150" stroke="#5f6368" marker-end="url(#arr)"/>
+  <line x1="260" y1="190" x2="260" y2="220" stroke="#5f6368" marker-end="url(#arr)"/>
+  <line x1="260" y1="260" x2="260" y2="290" stroke="#5f6368" marker-end="url(#arr)"/>
+  <line x1="360" y1="310" x2="400" y2="310" stroke="#d93025" marker-end="url(#arrR)"/>
+  <line x1="260" y1="330" x2="260" y2="360" stroke="#188038" marker-end="url(#arrG)"/>
+  <line x1="260" y1="400" x2="260" y2="420" stroke="#1a73e8" marker-end="url(#arrB)"/>
+  <!-- loop back from Memo to Worklist -->
+  <path d="M 160 438 Q 60 438 60 170 Q 60 150 160 170" fill="none" stroke="#5f6368" stroke-dasharray="4 3" marker-end="url(#arr)"/>
+  <defs>
+    <marker id="arr" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#5f6368"/></marker>
+    <marker id="arrR" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#d93025"/></marker>
+    <marker id="arrG" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#188038"/></marker>
+    <marker id="arrB" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#1a73e8"/></marker>
+  </defs>
+</svg>

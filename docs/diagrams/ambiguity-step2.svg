@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 180" font-family="sans-serif" font-size="13">
+  <title>Ambiguity step 2 — three branches after input '+'</title>
+  <rect x="10" y="10" width="500" height="160" fill="none" stroke="#dadce0" stroke-dasharray="4 3"/>
+  <text x="20" y="28" fill="#5f6368">Step 2 (input '+')</text>
+  <rect x="20" y="50" width="150" height="90" rx="6" fill="#e8f0fe" stroke="#1a73e8"/>
+  <text x="95" y="78" text-anchor="middle">📍 Branch A</text>
+  <text x="95" y="96" text-anchor="middle">matched '+',</text>
+  <text x="95" y="114" text-anchor="middle">now at right S</text>
+  <rect x="185" y="50" width="150" height="90" rx="6" fill="#fce8e6" stroke="#d93025"/>
+  <text x="260" y="78" text-anchor="middle">📍 Branch B</text>
+  <text x="260" y="105" text-anchor="middle">still exploring...</text>
+  <rect x="350" y="50" width="150" height="90" rx="6" fill="#fef7e0" stroke="#f9ab00"/>
+  <text x="425" y="78" text-anchor="middle">📍 Branch C</text>
+  <text x="425" y="105" text-anchor="middle">another path</text>
+</svg>

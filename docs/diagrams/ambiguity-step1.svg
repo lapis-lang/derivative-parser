@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 140" font-family="sans-serif" font-size="13">
+  <title>Ambiguity step 1 — two branches explore simultaneously</title>
+  <rect x="10" y="10" width="340" height="120" fill="none" stroke="#dadce0" stroke-dasharray="4 3"/>
+  <text x="20" y="28" fill="#5f6368">Step 1 (input '1')</text>
+  <rect x="30" y="50" width="140" height="60" rx="6" fill="#e8f0fe" stroke="#1a73e8"/>
+  <text x="100" y="78" text-anchor="middle">📍 Branch A</text>
+  <text x="100" y="96" text-anchor="middle">→ Tok('1')</text>
+  <rect x="190" y="50" width="140" height="60" rx="6" fill="#fce8e6" stroke="#d93025"/>
+  <text x="260" y="78" text-anchor="middle">📍 Branch B</text>
+  <text x="260" y="96" text-anchor="middle">→ S (recursive)</text>
+</svg>

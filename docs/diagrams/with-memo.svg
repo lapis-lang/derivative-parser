@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 460 220" font-family="sans-serif" font-size="13">
+  <title>With PwZ memoization: polynomial — shared exploration</title>
+  <rect x="10" y="10" width="440" height="200" fill="none" stroke="#dadce0" stroke-dasharray="4 3"/>
+  <text x="20" y="28" fill="#5f6368">With PwZ memoization: polynomial</text>
+  <rect x="30" y="50" width="180" height="40" rx="6" fill="#fff" stroke="#5f6368"/>
+  <text x="120" y="75" text-anchor="middle">Zipper 1 at node S, pos 3</text>
+  <rect x="250" y="50" width="180" height="40" rx="6" fill="#fff" stroke="#5f6368"/>
+  <text x="340" y="75" text-anchor="middle">Zipper 2 at node S, pos 3</text>
+  <rect x="150" y="120" width="160" height="40" rx="6" fill="#e6f4ea" stroke="#188038"/>
+  <text x="230" y="145" text-anchor="middle">Shared Mem (explored once)</text>
+  <rect x="150" y="180" width="160" height="30" rx="6" fill="#e8f0fe" stroke="#1a73e8"/>
+  <text x="230" y="200" text-anchor="middle">Result reused by both</text>
+  <line x1="120" y1="90" x2="200" y2="120" stroke="#188038"/>
+  <line x1="340" y1="90" x2="260" y2="120" stroke="#188038"/>
+  <line x1="230" y1="160" x2="230" y2="180" stroke="#1a73e8"/>
+</svg>

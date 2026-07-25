@@ -30,6 +30,9 @@ jobs:
       - name: Test
         run: deno test
 
+      - name: JSDoc coverage (exported symbols)
+        run: deno task check-docs
+
   publish:
     needs: check
     if: github.event_name == 'release'

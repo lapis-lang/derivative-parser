@@ -7,13 +7,15 @@
     "include": [
       "LICENSE",
       "README.md",
-      "src/**/*.ts"
+      "src/**/*.ts",
+      "docs/diagrams/**/*.svg"
     ]
   },
   "tasks": {
     "test": "deno test",
     "example": "deno run examples/arith-demo.ts",
-    "bench": "deno run examples/scaling-bench.ts"
+    "bench": "deno run examples/scaling-bench.ts",
+    "check-docs": "deno run --allow-read --allow-run=deno scripts/check_docs.ts"
   },
   "lint": {
     "include": ["src/", "test/", "examples/"]
