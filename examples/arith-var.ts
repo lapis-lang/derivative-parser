@@ -121,7 +121,13 @@ export abstract class AbstractArithVar<S extends ArithVarShape>
   @rule
   protected addProd(env: Env): Parser<S["expr"]> {
     return this.or(
-      this.seq(this.addProd(env), this.ws, this.char("+"), this.ws, this.mulProd(env))
+      this.seq(
+        this.addProd(env),
+        this.ws,
+        this.char("+"),
+        this.ws,
+        this.mulProd(env),
+      )
         .map(([l, , , , r]) => this.add(l, r)),
       this.mulProd(env) as Parser<S["expr"]>,
     );
@@ -131,7 +137,13 @@ export abstract class AbstractArithVar<S extends ArithVarShape>
   @rule
   protected mulProd(env: Env): Parser<S["term"]> {
     return this.or(
-      this.seq(this.mulProd(env), this.ws, this.char("*"), this.ws, this.atomProd(env))
+      this.seq(
+        this.mulProd(env),
+        this.ws,
+        this.char("*"),
+        this.ws,
+        this.atomProd(env),
+      )
         .map(([l, , , , r]) => this.mul(l, r)),
       this.atomProd(env) as Parser<S["term"]>,
     );
@@ -240,10 +252,9 @@ export type ArithVarExp =
   | { tag: "add"; left: ArithVarExp; right: ArithVarExp }
   | { tag: "mul"; left: ArithVarExp; right: ArithVarExp };
 
-export class ArithVarAST
-  extends AbstractArithVar<
-    { expr: ArithVarExp; term: ArithVarExp; factor: ArithVarExp }
-  > {
+export class ArithVarAST extends AbstractArithVar<
+  { expr: ArithVarExp; term: ArithVarExp; factor: ArithVarExp }
+> {
   override start(): Parser<ArithVarExp> {
     return this.expr(Env.empty());
   }

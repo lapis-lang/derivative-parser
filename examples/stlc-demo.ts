@@ -9,14 +9,14 @@
  */
 
 import {
+  Closure,
   STLCAST,
-  STLCTypeCheck,
   STLCEval,
+  STLCTypeCheck,
   STLCTyped,
+  type Term,
   TypeEnv,
   ValEnv,
-  Closure,
-  type Term,
 } from "./stlc.ts";
 
 /* ── AST ────────────────────────────────────────────────────────────── */
@@ -76,6 +76,8 @@ const idTT = [...tt.parseWith("\\x:Int. x", TypeEnv.empty())][0]!;
 console.log(`  \\x:Int. x :`);
 console.log(`    ${idTT.print()}`);
 
-const appTT = [...tt.parseWith("(\\x:Int -> Int. x) (\\y:Int. y)", TypeEnv.empty())][0]!;
+const appTT = [
+  ...tt.parseWith("(\\x:Int -> Int. x) (\\y:Int. y)", TypeEnv.empty()),
+][0]!;
 console.log(`  (\\x:Int -> Int. x) (\\y:Int. y) :`);
 console.log(`    ${appTT.print()}`);

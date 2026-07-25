@@ -111,7 +111,11 @@ export class Var extends Term {
 }
 
 export class Lam extends Term {
-  constructor(readonly param: string, readonly type: Type, readonly body: Term) {
+  constructor(
+    readonly param: string,
+    readonly type: Type,
+    readonly body: Term,
+  ) {
     super();
   }
   override print(): string {
@@ -194,7 +198,11 @@ export class TypedLam extends TypedTerm {
 }
 
 export class TypedApp extends TypedTerm {
-  constructor(readonly fn: TypedTerm, readonly arg: TypedTerm, readonly type: Type) {
+  constructor(
+    readonly fn: TypedTerm,
+    readonly arg: TypedTerm,
+    readonly type: Type,
+  ) {
     super();
   }
   override print(): string {
@@ -249,7 +257,7 @@ export class Closure {
     readonly param: string,
     readonly type: Type,
     readonly body: unknown, // The body parser's result type varies per interpretation
-    readonly env: unknown,  // The env type varies per interpretation
+    readonly env: unknown, // The env type varies per interpretation
   ) {}
 }
 
@@ -424,16 +432,16 @@ export abstract class AbstractSTLC<S extends STLCShape> extends Grammar<S> {
   @rule
   protected lambdaProd(ctx: unknown): Parser<S["expr"]> {
     return this.seq(
-      this.lambdaHead,   // 0
-      this.ident,         // 1  param
-      this.ws,            // 2
-      this.char(":"),     // 3
-      this.ws,            // 4
-      this.type,           // 5  τ
-      this.ws,            // 6
-      this.char("."),     // 7
-      this.ws,            // 8
-    ).chain(([, param, , , , ty, , , ]) =>
+      this.lambdaHead, // 0
+      this.ident, // 1  param
+      this.ws, // 2
+      this.char(":"), // 3
+      this.ws, // 4
+      this.type, // 5  τ
+      this.ws, // 6
+      this.char("."), // 7
+      this.ws, // 8
+    ).chain(([, param, , , , ty]) =>
       // τ is now available; extend ctx and parse body.
       this.exprProd(this.extendCtx(ctx, param, ty))
         .map((body) => this.lam(param, ty, body))
@@ -451,17 +459,17 @@ export abstract class AbstractSTLC<S extends STLCShape> extends Grammar<S> {
   @rule
   protected letProd(ctx: unknown): Parser<S["expr"]> {
     return this.seq(
-      this.kw("let"),     // 0
-      this.ws1,            // 1
-      this.ident,          // 2  name
-      this.ws,             // 3
-      this.char(":"),      // 4
-      this.ws,             // 5
-      this.type,           // 6  τ
-      this.ws,             // 7
-      this.char("="),      // 8
-      this.ws,             // 9
-    ).chain(([, , name, , , , ty, , , ]) =>
+      this.kw("let"), // 0
+      this.ws1, // 1
+      this.ident, // 2  name
+      this.ws, // 3
+      this.char(":"), // 4
+      this.ws, // 5
+      this.type, // 6  τ
+      this.ws, // 7
+      this.char("="), // 8
+      this.ws, // 9
+    ).chain(([, , name, , , , ty]) =>
       // Parse def under outer ctx, then consume "in", then parse body.
       this.exprProd(ctx)
         .map((def) => ({ name, ty, def }))
@@ -469,7 +477,7 @@ export abstract class AbstractSTLC<S extends STLCShape> extends Grammar<S> {
           this.seq(this.ws1, this.kw("in"), this.ws1)
             .chain(() =>
               this.exprProd(this.extendCtx(ctx, name, ty))
-                .map((body) => this.let_(name, ty, def, body)),
+                .map((body) => this.let_(name, ty, def, body))
             )
             .map(([, result]) => result)
         )
@@ -489,7 +497,13 @@ export abstract class AbstractSTLC<S extends STLCShape> extends Grammar<S> {
   @rule
   protected atomProd(ctx: unknown): Parser<S["atom"]> {
     return this.or(
-      this.seq(this.char("("), this.ws, this.exprProd(ctx), this.ws, this.char(")"))
+      this.seq(
+        this.char("("),
+        this.ws,
+        this.exprProd(ctx),
+        this.ws,
+        this.char(")"),
+      )
         .map(([, , e]) => this.paren(e)),
       this.kw("true").map(() => this.boolLit(true)),
       this.kw("false").map(() => this.boolLit(false)),
@@ -532,7 +546,9 @@ export abstract class AbstractSTLC<S extends STLCShape> extends Grammar<S> {
     return this.seq(this.identFirst, this.identRest)
       .map(([h, t]) => h + t)
       .chain((name) => {
-        if (name === "let" || name === "in" || name === "true" || name === "false") {
+        if (
+          name === "let" || name === "in" || name === "true" || name === "false"
+        ) {
           return this.empty() as unknown as Parser<string>;
         }
         return this.epsilon(name);
@@ -664,7 +680,11 @@ export class STLCTypeCheck
     return this.exprProd(TypeEnv.empty());
   }
 
-  protected override extendCtx(ctx: unknown, name: string, type: Type): unknown {
+  protected override extendCtx(
+    ctx: unknown,
+    name: string,
+    type: Type,
+  ): unknown {
     return (ctx as TypeEnv).extend(name, type);
   }
 
@@ -834,7 +854,11 @@ export class STLCTyped
     return this.exprProd(TypeEnv.empty());
   }
 
-  protected override extendCtx(ctx: unknown, name: string, type: Type): unknown {
+  protected override extendCtx(
+    ctx: unknown,
+    name: string,
+    type: Type,
+  ): unknown {
     return (ctx as TypeEnv).extend(name, type);
   }
 
@@ -846,7 +870,12 @@ export class STLCTyped
     if (!(fn.type instanceof TFun)) return undefined as unknown as TypedTerm;
     return new TypedApp(fn, arg, fn.type.cod);
   }
-  protected let_(name: string, type: Type, def: TypedTerm, body: TypedTerm): TypedTerm {
+  protected let_(
+    name: string,
+    type: Type,
+    def: TypedTerm,
+    body: TypedTerm,
+  ): TypedTerm {
     return new TypedLet(name, type, def, body);
   }
   protected varRef(name: string, ctx: unknown): TypedTerm {
@@ -873,10 +902,15 @@ export class STLCTyped
           this.seq(this.ws1, this.atomProd(ctx))
             .map(([, argTT]) => ({ fnTT, argTT }))
             .chain(({ fnTT, argTT }) => {
-              if (!(fnTT.type instanceof TFun) || !typeEq(fnTT.type.dom, argTT.type)) {
+              if (
+                !(fnTT.type instanceof TFun) ||
+                !typeEq(fnTT.type.dom, argTT.type)
+              ) {
                 return this.empty() as unknown as Parser<TypedTerm>;
               }
-              return this.epsilon<TypedTerm>(new TypedApp(fnTT, argTT, fnTT.type.cod));
+              return this.epsilon<TypedTerm>(
+                new TypedApp(fnTT, argTT, fnTT.type.cod),
+              );
             })
             .map(([, result]) => result)
         )

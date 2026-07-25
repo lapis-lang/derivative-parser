@@ -4,37 +4,31 @@
  */
 
 import { assert, assertEquals } from "@std/assert";
-import {
-  ArithVarEval,
-  ArithVarAST,
-  Env,
-} from "../examples/arith-var.ts";
+import { ArithVarAST, ArithVarEval, Env } from "../examples/arith-var.ts";
 import {
   STLCAST,
-  STLCTypeCheck,
   STLCEval,
+  STLCTypeCheck,
   STLCTyped,
-  TypeEnv,
-  ValEnv,
-  TVar,
-  TFun,
-
-  typeEq,
   type Term,
+  TFun,
+  TVar,
+  TypeEnv,
+  typeEq,
+  ValEnv,
 } from "../examples/stlc.ts";
 import {
-  PropAST,
-  PropTruth,
-  PropProof,
-
-  printFormula,
   type Formula,
+  printFormula,
+  PropAST,
+  PropProof,
+  PropTruth,
 } from "../examples/proplogic.ts";
 import {
   LambdaAST,
   lambdaEval,
-  UTValEnv,
   UTClosure,
+  UTValEnv,
 } from "../examples/lambda-eval.ts";
 
 /* ── arith-var: inherited attributes (read-only env) ────────────────── */
@@ -63,7 +57,11 @@ Deno.test("ArithVarAST — AST builder (env ignored)", () => {
   const [ast] = [...g.parseWith("x*y + 2", env)];
   assertEquals(ast, {
     tag: "add",
-    left: { tag: "mul", left: { tag: "var", name: "x" }, right: { tag: "var", name: "y" } },
+    left: {
+      tag: "mul",
+      left: { tag: "var", name: "x" },
+      right: { tag: "var", name: "y" },
+    },
     right: { tag: "num", value: 2 },
   });
 });
@@ -78,7 +76,10 @@ Deno.test("STLCAST — syntax builder", async (t) => {
   });
   await t.step("parses let", () => {
     const [ast] = [...g.parse("let f : Int -> Int = \\x:Int. x in f 7")];
-    assertEquals((ast as Term).print(), "(let f:(Int → Int) = (λx:Int. x) in (f 7))");
+    assertEquals(
+      (ast as Term).print(),
+      "(let f:(Int → Int) = (λx:Int. x) in (f 7))",
+    );
   });
   await t.step("parses application", () => {
     const [ast] = [...g.parse("(\\x:Int -> Int. x) (\\y:Int. y)")];
@@ -96,14 +97,19 @@ Deno.test("STLCTypeCheck — one-pass typing judgment", async (t) => {
   });
   await t.step("λx:Int. λy:Bool. x : Int → (Bool → Int)", () => {
     const [ty] = [...tc.parseWith("\\x:Int. \\y:Bool. x", empty)];
-    assertEquals(ty, new TFun(new TVar("Int"), new TFun(new TVar("Bool"), new TVar("Int"))));
+    assertEquals(
+      ty,
+      new TFun(new TVar("Int"), new TFun(new TVar("Bool"), new TVar("Int"))),
+    );
   });
   await t.step("(\\x:Int -> Int. x) (\\y:Int. y) : Int → Int", () => {
     const [ty] = [...tc.parseWith("(\\x:Int -> Int. x) (\\y:Int. y)", empty)];
     assertEquals(ty, new TFun(new TVar("Int"), new TVar("Int")));
   });
   await t.step("let f : Int -> Int = \\x:Int. x in f 7 : Int", () => {
-    const [ty] = [...tc.parseWith("let f : Int -> Int = \\x:Int. x in f 7", empty)];
+    const [ty] = [
+      ...tc.parseWith("let f : Int -> Int = \\x:Int. x in f 7", empty),
+    ];
     assertEquals(ty, new TVar("Int"));
   });
   await t.step("ill-typed: \\x:Int. x x is rejected", () => {
@@ -121,7 +127,9 @@ Deno.test("STLCEval — multi-pass evaluation", async (t) => {
   const empty = ValEnv.empty();
 
   await t.step("let f = \\x:Int. x in f 7 ⇓ 7", () => {
-    const [v] = [...ev.parseWith("let f : Int -> Int = \\x:Int. x in f 7", empty)];
+    const [v] = [
+      ...ev.parseWith("let f : Int -> Int = \\x:Int. x in f 7", empty),
+    ];
     assertEquals(v, 7);
   });
   await t.step("(\\x:Int. x) 42 ⇓ 42", () => {
@@ -140,7 +148,10 @@ Deno.test("STLCTyped — proof-bearing type checker", async (t) => {
 
   await t.step("λx:Int. x yields TypedLam with type Int → Int", () => {
     const [result] = [...tt.parseWith("\\x:Int. x", empty)];
-    assertEquals(typeEq(result.type, new TFun(new TVar("Int"), new TVar("Int"))), true);
+    assertEquals(
+      typeEq(result.type, new TFun(new TVar("Int"), new TVar("Int"))),
+      true,
+    );
   });
   await t.step("ill-typed term rejected", () => {
     const results = [...tt.parseWith("\\x:Int. x x", empty)];

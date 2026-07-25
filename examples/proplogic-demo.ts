@@ -8,11 +8,11 @@
  */
 
 import {
-  PropAST,
-  PropTruth,
-  PropProof,
   printFormula,
   printProof,
+  PropAST,
+  PropProof,
+  PropTruth,
 } from "./proplogic.ts";
 
 /* ── AST ────────────────────────────────────────────────────────────── */

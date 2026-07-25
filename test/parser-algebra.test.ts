@@ -57,7 +57,10 @@ const _ = new class extends Grammar<{ r: unknown }> {
   override literal(s: string) {
     return super.literal(s);
   }
-  override chain<T, U>(first: Parser<T>, fn: (t: T) => Parser<U>): Parser<[T, U]> {
+  override chain<T, U>(
+    first: Parser<T>,
+    fn: (t: T) => Parser<U>,
+  ): Parser<[T, U]> {
     return super.chain(first, fn);
   }
 }();
@@ -240,21 +243,27 @@ Deno.test("opt (A?)", async (t) => {
 Deno.test("map — throwing semantic action drops the branch", () => {
   // A .map() callback that throws should not crash the parse driver;
   // the branch is silently dropped (empty parse forest).
-  const p = _.char("a").map(() => { throw new Error("boom"); });
+  const p = _.char("a").map(() => {
+    throw new Error("boom");
+  });
   assertEquals(parse(p, "a"), []);
 });
 
 Deno.test("chain — throwing callback drops the branch", () => {
   // A chain callback that throws should not crash the parse driver;
   // the branch is silently dropped.
-  const p = _.chain(_.char("a"), () => { throw new Error("boom"); });
+  const p = _.chain(_.char("a"), () => {
+    throw new Error("boom");
+  });
   assertEquals(parse(p, "a"), []);
 });
 
 Deno.test("map — non-throwing branch still succeeds alongside a throwing one", () => {
   // In an alternation, one branch's .map() throws but the other succeeds.
   const p = _.or(
-    _.char("a").map(() => { throw new Error("boom"); }),
+    _.char("a").map(() => {
+      throw new Error("boom");
+    }),
     _.char("a").map(() => "ok"),
   );
   assertEquals(parse(p, "a"), ["ok"]);
@@ -280,8 +289,9 @@ Deno.test("chain — basic [T, U] pairing", async (t) => {
 Deno.test("chain — second parser depends on first result", async (t) => {
   // Parse a char, then use it to decide what to parse next.
   // If 'a' → expect '1'; if 'b' → expect '2'.
-  const p = _.chain(_.char("a").or(_.char("b")), (x) =>
-    x === "a" ? _.char("1") : _.char("2"),
+  const p = _.chain(
+    _.char("a").or(_.char("b")),
+    (x) => x === "a" ? _.char("1") : _.char("2"),
   );
 
   await t.step("'a1' → ['a', '1']", () => {
@@ -332,7 +342,8 @@ Deno.test("chain — interaction with left recursion", async (t) => {
     override start(): Parser<string> {
       return this.s;
     }
-    @rule get s(): Parser<string> {
+    @rule
+    get s(): Parser<string> {
       return this.or(
         this.chain(this.s, (l: string) => this.char("a").map((r) => l + r))
           .map(([, result]) => result),
@@ -355,8 +366,9 @@ Deno.test("chain — interaction with left recursion", async (t) => {
 Deno.test("chain — nested chain flattening", async (t) => {
   // chain(a, a => chain(b, b => c)) → [["a", ["b", "c"]]
   // With .map extraction: flatten to just "c"
-  const p = _.chain(_.char("a"), () =>
-    _.chain(_.char("b"), () => _.char("c")).map(([, r]) => r),
+  const p = _.chain(
+    _.char("a"),
+    () => _.chain(_.char("b"), () => _.char("c")).map(([, r]) => r),
   ).map(([, r]) => r);
 
   await t.step("'abc' → ['c'] (flattened)", () => {

@@ -62,7 +62,11 @@ export class UTApp extends UTTerm {
 }
 
 export class UTLet extends UTTerm {
-  constructor(readonly name: string, readonly def: UTTerm, readonly body: UTTerm) {
+  constructor(
+    readonly name: string,
+    readonly def: UTTerm,
+    readonly body: UTTerm,
+  ) {
     super();
   }
   override print(): string {
@@ -75,7 +79,11 @@ export class UTLet extends UTTerm {
 export type UTValue = UTClosure | number | boolean;
 
 export class UTClosure {
-  constructor(readonly param: string, readonly body: UTTerm, readonly env: UTValEnv) {}
+  constructor(
+    readonly param: string,
+    readonly body: UTTerm,
+    readonly env: UTValEnv,
+  ) {}
 }
 
 /* ─── Environments ───────────────────────────────────────────────────── */
@@ -112,7 +120,11 @@ export interface LambdaShape {
 export abstract class AbstractLambda<S extends LambdaShape> extends Grammar<S> {
   protected abstract lam(param: string, body: S["expr"]): S["expr"];
   protected abstract app(fn: S["atom"], arg: S["atom"]): S["expr"];
-  protected abstract let_(name: string, def: S["expr"], body: S["expr"]): S["expr"];
+  protected abstract let_(
+    name: string,
+    def: S["expr"],
+    body: S["expr"],
+  ): S["expr"];
   protected abstract varRef(name: string): S["atom"];
   protected abstract paren(e: S["expr"]): S["atom"];
 
@@ -128,15 +140,29 @@ export abstract class AbstractLambda<S extends LambdaShape> extends Grammar<S> {
   @rule
   protected get letProd(): Parser<S["expr"]> {
     return this.seq(
-      this.kw("let"), this.ws1, this.ident, this.ws, this.char("="), this.ws,
-      this.exprProd, this.ws1, this.kw("in"), this.ws1, this.exprProd,
+      this.kw("let"),
+      this.ws1,
+      this.ident,
+      this.ws,
+      this.char("="),
+      this.ws,
+      this.exprProd,
+      this.ws1,
+      this.kw("in"),
+      this.ws1,
+      this.exprProd,
     ).map(([, , name, , , , def, , , , body]) => this.let_(name, def, body));
   }
 
   @rule
   protected get lambdaProd(): Parser<S["expr"]> {
     return this.seq(
-      this.lambdaHead, this.ident, this.ws, this.char("."), this.ws, this.exprProd,
+      this.lambdaHead,
+      this.ident,
+      this.ws,
+      this.char("."),
+      this.ws,
+      this.exprProd,
     ).map(([, param, , , , body]) => this.lam(param, body));
   }
 
@@ -259,7 +285,9 @@ export function lambdaEval(term: UTTerm, env: UTValEnv): UTValue {
   if (term instanceof UTApp) {
     const fn = lambdaEval(term.fn, env);
     const arg = lambdaEval(term.arg, env);
-    if (!(fn instanceof UTClosure)) throw new Error(`cannot apply non-function`);
+    if (!(fn instanceof UTClosure)) {
+      throw new Error(`cannot apply non-function`);
+    }
     return lambdaEval(fn.body, fn.env.extend(fn.param, arg));
   }
   if (term instanceof UTLet) {

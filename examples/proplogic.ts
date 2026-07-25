@@ -66,7 +66,11 @@ export function formulaEq(a: Formula, b: Formula): boolean {
     case "and":
     case "or":
     case "imp": {
-      const bb = b as { tag: "and" | "or" | "imp"; left: Formula; right: Formula };
+      const bb = b as {
+        tag: "and" | "or" | "imp";
+        left: Formula;
+        right: Formula;
+      };
       return formulaEq(a.left, bb.left) && formulaEq(a.right, bb.right);
     }
   }
@@ -128,7 +132,9 @@ export function printProof(p: NDProof, indent = 0): string {
     case "notElim":
       return `${pad}¬Elim\n${printProof(p.proof, indent + 1)}`;
     case "andIntro":
-      return `${pad}∧Intro\n${printProof(p.left, indent + 1)}\n${printProof(p.right, indent + 1)}`;
+      return `${pad}∧Intro\n${printProof(p.left, indent + 1)}\n${
+        printProof(p.right, indent + 1)
+      }`;
     case "andElimL":
       return `${pad}∧ElimL\n${printProof(p.proof, indent + 1)}`;
     case "andElimR":
@@ -138,11 +144,15 @@ export function printProof(p: NDProof, indent = 0): string {
     case "orIntroR":
       return `${pad}∨IntroR\n${printProof(p.proof, indent + 1)}`;
     case "orElim":
-      return `${pad}∨Elim\n${printProof(p.proof, indent + 1)}\n${printProof(p.left, indent + 1)}\n${printProof(p.right, indent + 1)}`;
+      return `${pad}∨Elim\n${printProof(p.proof, indent + 1)}\n${
+        printProof(p.left, indent + 1)
+      }\n${printProof(p.right, indent + 1)}`;
     case "impIntro":
       return `${pad}→Intro\n${printProof(p.proof, indent + 1)}`;
     case "impElim":
-      return `${pad}→Elim\n${printProof(p.fn, indent + 1)}\n${printProof(p.arg, indent + 1)}`;
+      return `${pad}→Elim\n${printProof(p.fn, indent + 1)}\n${
+        printProof(p.arg, indent + 1)
+      }`;
   }
 }
 
@@ -245,7 +255,13 @@ export abstract class AbstractProp<S extends PropShape> extends Grammar<S> {
     return this.or(
       this.literal("⊤").map(() => this.top()),
       this.literal("⊥").map(() => this.bot()),
-      this.seq(this.char("("), this.ws, this.formulaProd, this.ws, this.char(")"))
+      this.seq(
+        this.char("("),
+        this.ws,
+        this.formulaProd,
+        this.ws,
+        this.char(")"),
+      )
         .map(([, , e]) => this.paren(e)),
       this.ident.map((name) => this.var_(name, null)),
     );
@@ -396,6 +412,20 @@ export class PropTruth
     return this._parseWith(input, this.formulaEval(alpha));
   }
 
+  /**
+   * Default `parse` with an empty assignment.  Variables will be unbound
+   * (branches containing them are dropped), so only variable-free formulas
+   * (⊤, ⊥, and combinations thereof) produce results.
+   */
+  override parse(input: string): Set<boolean> {
+    return this.parseWith(input, {});
+  }
+
+  /** Default `recognize` with an empty assignment. */
+  override recognize(input: string): boolean {
+    return this.parseWith(input, {}).size > 0;
+  }
+
   /* ── parameterised productions (thread alpha as inherited context) ── */
   //
   // These override the abstract grammar's getter-form productions with
@@ -406,7 +436,13 @@ export class PropTruth
   @rule
   formulaEval(alpha: Record<string, boolean>): Parser<boolean> {
     return this.or(
-      this.seq(this.orEval(alpha), this.ws, this.arrow, this.ws, this.formulaEval(alpha))
+      this.seq(
+        this.orEval(alpha),
+        this.ws,
+        this.arrow,
+        this.ws,
+        this.formulaEval(alpha),
+      )
         .map(([l, , , , r]) => this.imp(l, r)),
       this.orEval(alpha),
     );
@@ -415,7 +451,13 @@ export class PropTruth
   @rule
   protected orEval(alpha: Record<string, boolean>): Parser<boolean> {
     return this.or(
-      this.seq(this.orEval(alpha), this.ws, this.orSym, this.ws, this.andEval(alpha))
+      this.seq(
+        this.orEval(alpha),
+        this.ws,
+        this.orSym,
+        this.ws,
+        this.andEval(alpha),
+      )
         .map(([l, , , , r]) => this.or_(l, r)),
       this.andEval(alpha),
     );
@@ -424,7 +466,13 @@ export class PropTruth
   @rule
   protected andEval(alpha: Record<string, boolean>): Parser<boolean> {
     return this.or(
-      this.seq(this.andEval(alpha), this.ws, this.andSym, this.ws, this.notEval(alpha))
+      this.seq(
+        this.andEval(alpha),
+        this.ws,
+        this.andSym,
+        this.ws,
+        this.notEval(alpha),
+      )
         .map(([l, , , , r]) => this.and_(l, r)),
       this.notEval(alpha),
     );
@@ -444,7 +492,13 @@ export class PropTruth
     return this.or(
       this.literal("⊤").map(() => this.top()),
       this.literal("⊥").map(() => this.bot()),
-      this.seq(this.char("("), this.ws, this.formulaEval(alpha), this.ws, this.char(")"))
+      this.seq(
+        this.char("("),
+        this.ws,
+        this.formulaEval(alpha),
+        this.ws,
+        this.char(")"),
+      )
         .map(([, , e]) => this.paren(e)),
       this.ident.map((name) => this.var_(name, alpha)),
     );

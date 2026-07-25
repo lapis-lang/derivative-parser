@@ -19,5 +19,7 @@ for (const src of evalCases) {
 
 console.log("\n— ArithVarAST (tree builder; env ignored) —");
 console.log(
-  `  x*y + 2 → ${JSON.stringify([...new ArithVarAST().parseWith("x*y + 2", env)])}`,
+  `  x*y + 2 → ${
+    JSON.stringify([...new ArithVarAST().parseWith("x*y + 2", env)])
+  }`,
 );

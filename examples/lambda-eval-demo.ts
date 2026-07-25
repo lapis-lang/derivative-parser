@@ -2,14 +2,13 @@
  * Runnable demo for untyped lambda calculus evaluator.
  */
 
-import { LambdaAST, lambdaEval, UTValEnv, UTClosure } from "./lambda-eval.ts";
+import { LambdaAST, lambdaEval, UTClosure, UTValEnv } from "./lambda-eval.ts";
 
 const g = new LambdaAST();
 
 const cases = [
   "\\x.x",
   "let id = \\x.x in id id",
-  "(\\x.\\y.x) (\\z.z) (\\w.w)",
   "(\\x.\\y.x) (\\z.z) (\\w.w)",
 ];
 
