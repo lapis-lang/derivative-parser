@@ -1,4 +1,4 @@
-# @lapis-lang/derivative-parser
+# @lapis-lang/zipper-grammar
 
 A TypeScript implementation of **Parsing with Zippers** (Darragh & Adams,
 ICFP 2020) with full semantic actions, an object-oriented front-end inspired
@@ -9,7 +9,7 @@ including left-recursion and ambiguity — is handled by lazy references and
 the PwZ zipper engine.
 
 ```ts
-import { Grammar, rule } from '@lapis-lang/derivative-parser';
+import { Grammar, rule } from '@lapis-lang/zipper-grammar';
 
 class BalancedParens extends Grammar<{ s: string }> {
     start() { return this.s; }
@@ -28,10 +28,14 @@ new BalancedParens().parse('()');         // Set { 'ok' }
 ## Installation
 
 ```bash
-npm install github:lapis-lang/derivative-parser#v1.0.0
+# Deno
+deno add jsr:@lapis-lang/zipper-grammar
+
+# npm / yarn / pnpm / bun
+npx jsr add @lapis-lang/zipper-grammar
 ```
 
-Replace `v1.0.0` with the desired [tagged release](https://github.com/lapis-lang/derivative-parser/releases).
+Then import from `jsr:@lapis-lang/zipper-grammar` (Deno) or `@lapis-lang/zipper-grammar` (Node-style resolvers via the JSR npm compatibility layer).
 
 ## Why "executable grammars"?
 
@@ -125,7 +129,7 @@ Every `.map()` callback receives a `Span` as its second argument describing
 the half-open character-offset range `[start, end)` of the matched input:
 
 ```ts
-import type { Span } from '@lapis-lang/derivative-parser';
+import type { Span } from '@lapis-lang/zipper-grammar';
 
 interface Node { text: string; span: Span }
 
@@ -144,8 +148,8 @@ ignored.
 ## API
 
 ```ts
-import { Grammar, Parser } from '@lapis-lang/derivative-parser';
-import type { Span } from '@lapis-lang/derivative-parser';
+import { Grammar, Parser } from '@lapis-lang/zipper-grammar';
+import type { Span } from '@lapis-lang/zipper-grammar';
 ```
 
 ### `Grammar<S>` — abstract base
@@ -215,56 +219,59 @@ while full `parse()` still returns the complete forest.
 ### Performance
 
 Empirical scaling on the inherently-ambiguous worst case `S = S+S | 1`
-(`recognize` mode; fresh grammar instance per iteration; `--stack-size=8192`):
+(`recognize` mode; fresh grammar instance per iteration; mean of 5 runs with
+the noisiest outlier discarded on small inputs):
 
 | n    | input length | Grammar (PwZ) |
 | ---- | ------------ | ------------- |
-| 10   | 19           | <1 ms         |
-| 20   | 39           | ~2 ms         |
+| 10   | 19           | ~1 ms         |
+| 20   | 39           | ~3 ms         |
 | 50   | 99           | ~4 ms         |
-| 100  | 199          | ~20 ms        |
-| 200  | 399          | ~55 ms        |
-| 300  | 599          | ~165 ms       |
-| 500  | 999          | ~700 ms       |
-| 1000 | 1999         | ~5.8 s        |
+| 100  | 199          | ~15 ms        |
+| 200  | 399          | ~80 ms        |
+| 300  | 599          | ~218 ms       |
+| 500  | 999          | ~1004 ms      |
+| 1000 | 1999         | ~8.5 s        |
 
 Run the benchmark yourself:
 
 ```bash
-npm run bench
+deno task bench
 ```
 
 ## Project layout
 
 ```
 src/
-  index.mts           — public entry point
-  Grammar.mts         — OO grammar base + @rule decorator + drivers
-  Parser.mts          — thin Parser<T> wrapper (fluent API)
+  index.ts            — public entry point
+  Grammar.ts          — OO grammar base + @rule decorator + drivers
+  Parser.ts           — thin Parser<T> wrapper (fluent API)
+  util/
+    tree_key.ts       — content-based keying for parse-tree values
   zipper/
-    zipper.mts        — PwZ engine: Exp/Cxt/Mem hierarchy + ZipperDriver
+    zipper.ts         — PwZ engine: Exp/Cxt/Mem hierarchy + ZipperDriver
 examples/
-  arith.mts           — shape-typed arithmetic + Bracha-style override
-  arith-demo.mts      — runnable demo
-  csv.mts             — CSV parser example
-  indent.mts          — significant-whitespace (indentation-sensitive) grammar; demonstrates @rule methods (parameterised productions) and Span offsets
-  json.mts            — JSON parser example
-  lambda.mts          — lambda-calculus parser example
-  scaling-bench.mts   — PwZ scaling benchmark
+  arith.ts           — shape-typed arithmetic + Bracha-style override
+  arith-demo.ts      — runnable demo
+  csv.ts             — CSV parser example
+  indent.ts          — significant-whitespace (indentation-sensitive) grammar; demonstrates @rule methods (parameterised productions) and Span offsets
+  json.ts            — JSON parser example
+  lambda.ts          — lambda-calculus parser example
+  scaling-bench.ts   — PwZ scaling benchmark
 test/
-  parser-algebra.test.mts       — unit tests for Parser combinators
-  recognition.test.mts          — left-recursive / ambiguous grammars
-  grammar-composition.test.mts  — shape-typed grammars + Bracha override
+  parser-algebra.test.ts       — unit tests for Parser combinators
+  recognition.test.ts          — left-recursive / ambiguous grammars
+  grammar-composition.test.ts  — shape-typed grammars + Bracha override
 ```
 
 ## Scripts
 
 | Command                | Effect                                      |
 | ---------------------- | ------------------------------------------- |
-| `npm test`             | Type-check + run all tests with node:test.  |
-| `npm run build`        | Emit publish-ready `dist/`.                 |
-| `npm run example`      | Run the arithmetic example.                 |
-| `npm run bench`        | Run the scaling benchmark.                  |
+| `deno test`            | Type-check + run all tests with Deno's built-in test runner.  |
+| `deno task example`   | Run the arithmetic example.                 |
+| `deno task bench`     | Run the scaling benchmark.                  |
+| `deno publish`        | Publish a new version to JSR.               |
 
 ## References
 
