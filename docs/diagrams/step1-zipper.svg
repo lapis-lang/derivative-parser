@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 220" font-family="sans-serif" font-size="13">
+  <title>Step 1 — input 'a': zipper at Tok('b'), accumulated ['a']</title>
+  <!-- Grammar tree box -->
+  <rect x="10" y="10" width="300" height="200" fill="none" stroke="#dadce0" stroke-dasharray="4 3"/>
+  <text x="20" y="28" fill="#5f6368">Grammar tree</text>
+  <rect x="120" y="40" width="60" height="36" rx="6" fill="#e8f0fe" stroke="#1a73e8"/>
+  <text x="150" y="63" text-anchor="middle">Seq</text>
+  <rect x="40" y="120" width="90" height="36" rx="6" fill="#e6f4ea" stroke="#188038"/>
+  <text x="85" y="143" text-anchor="middle">Tok('a') ✓</text>
+  <rect x="190" y="120" width="90" height="36" rx="6" fill="#fff" stroke="#5f6368"/>
+  <text x="235" y="143" text-anchor="middle">Tok('b')</text>
+  <line x1="150" y1="76" x2="85" y2="120" stroke="#5f6368"/>
+  <line x1="150" y1="76" x2="235" y2="120" stroke="#5f6368"/>
+  <!-- Zipper box -->
+  <rect x="330" y="80" width="140" height="80" fill="none" stroke="#dadce0" stroke-dasharray="4 3"/>
+  <text x="340" y="98" fill="#5f6368">Zipper</text>
+  <text x="400" y="125" text-anchor="middle">📍 at Tok('b')</text>
+  <text x="400" y="145" text-anchor="middle">accumulated: ['a']</text>
+  <!-- dashed link to Tok('b') -->
+  <line x1="330" y1="120" x2="280" y2="138" stroke="#1a73e8" stroke-dasharray="3 3"/>
+</svg>

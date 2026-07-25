@@ -2,7 +2,7 @@
  * Thin, type-safe wrapper around a PwZ `Exp` node.
  *
  * `Parser<T>` is the user-facing type for all combinators. It carries the
- * underlying `Exp` (from `src/zipper/zipper.mts`) and exposes the fluent
+ * underlying `Exp` (from `src/zipper/zipper.ts`) and exposes the fluent
  * algebra that `Grammar` uses to build grammars. No derivative machinery,
  * no Pool — those concerns now live entirely in the zipper engine.
  */
@@ -19,10 +19,23 @@ import {
   type Span,
 } from "./zipper/zipper.ts";
 
+/**
+ * `Parser<T>` — the user-facing combinator type.
+ *
+ * A thin, type-safe wrapper around a PwZ `Exp` node. It carries the
+ * underlying `Exp` (from `src/zipper/zipper.ts`) and exposes the fluent
+ * algebra that `Grammar` uses to build grammars. No derivative machinery,
+ * no Pool — those concerns live entirely in the zipper engine.
+ *
+ * Instances are constructed by `Grammar` combinators (`char`, `seq`, `or`,
+ * …) and by the `@rule` decorator; users rarely call `new Parser(...)`
+ * directly.
+ */
 export class Parser<T> {
   /** @internal — exposes the underlying Exp to the Grammar driver. */
   readonly _exp: Exp;
 
+  /** @internal — wrap a pre-existing `Exp`. Prefer the `Grammar` combinators. */
   constructor(exp: Exp) {
     this._exp = exp;
   }

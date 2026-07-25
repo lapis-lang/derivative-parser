@@ -1,3 +1,20 @@
+import { Parser } from "./Parser.ts";
+import {
+  AltExp,
+  DelayedExp,
+  EmptyExp,
+  EpsilonExp,
+  PredTokExp,
+  SeqExp,
+  type Tok,
+  TokExp,
+  ZipperDriver,
+} from "./zipper/zipper.ts";
+import { treeKey } from "./util/tree_key.ts";
+
+/** A shape interface maps production names to their parse-tree types. */
+export type GrammarShape = Record<string, unknown>;
+
 /**
  * `Grammar` — abstract base for executable, OO grammars.
  *
@@ -20,23 +37,6 @@
  * types — see `examples/` for the Bracha-style abstract grammar +
  * concrete subclass pattern.
  */
-
-import { Parser } from "./Parser.ts";
-import {
-  AltExp,
-  DelayedExp,
-  EmptyExp,
-  EpsilonExp,
-  PredTokExp,
-  SeqExp,
-  type Tok,
-  TokExp,
-  ZipperDriver,
-} from "./zipper/zipper.ts";
-import { treeKey } from "./util/tree_key.ts";
-
-/** A shape interface maps production names to their parse-tree types. */
-export type GrammarShape = Record<string, unknown>;
 
 export abstract class Grammar<S extends GrammarShape = GrammarShape> {
   /**
@@ -204,11 +204,12 @@ export abstract class Grammar<S extends GrammarShape = GrammarShape> {
   }
 }
 
-/* ─── @rule decorator (TS5 stage-3) ──────────────────────────────────────
- *
- * A more ergonomic alternative to the stored-arrow `rule(body)` pattern.
- * Inspired by Bracha's `RunnableGrammar` / `ExecutableGrammar`,
- * but implemented with native decorators rather than mirrors / proxies.
+/**
+ * `@rule` — decorator that wraps a grammar production in a memoised lazy
+ * reference, the ergonomic alternative to the stored-arrow `rule(body)`
+ * pattern. Inspired by Bracha's `RunnableGrammar` / `ExecutableGrammar`,
+ * but implemented with native (TS5 stage-3) decorators rather than mirrors /
+ * proxies.
  *
  *   class Math extends Grammar<{ expr: number; ... }> {
  *     @rule get expr(): Parser<number> {
@@ -221,10 +222,10 @@ export abstract class Grammar<S extends GrammarShape = GrammarShape> {
  *     start() { return this.expr; }
  *   }
  *
- * **Getter form**: referenced as `this.expr` (not `this.expr()`). Decorator wraps
- *   the getter so each instance always returns the same `Parser` (backed by a
- *   `DelayedExp`), cached per `(this, getter)`, making the grammar graph
- *   properly recursive without manual thunks.
+ * **Getter form**: referenced as `this.expr` (not `this.expr()`). The
+ * decorator wraps the getter so each instance always returns the same
+ * `Parser` (backed by a `DelayedExp`), cached per `(this, getter)`, making
+ * the grammar graph properly recursive without manual thunks.
  *
  * **Method form** (parameterised productions):
  *
@@ -248,10 +249,12 @@ type RuleMethodCtx = ClassMethodDecoratorContext<
   (this: Grammar, ...args: any[]) => Parser<unknown>
 >;
 
+/** Decorator for a `@rule` **getter** — a non-parameterised production. */
 export function rule<T>(
   target: (this: Grammar) => Parser<T>,
   ctx: RuleGetterCtx,
 ): (this: Grammar) => Parser<T>;
+/** Decorator for a `@rule` **method** — a parameterised (context-sensitive) production. */
 export function rule<T, A extends unknown[]>(
   target: (this: Grammar, ...args: A) => Parser<T>,
   ctx: RuleMethodCtx,
