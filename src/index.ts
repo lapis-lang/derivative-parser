@@ -18,6 +18,30 @@
  */
 
 export { Grammar, rule } from "./Grammar.ts";
-export type { GrammarShape } from "./Grammar.ts";
+export type { Diagnostic, GrammarShape } from "./Grammar.ts";
 export { Parser } from "./Parser.ts";
 export type { Span } from "./zipper/zipper.ts";
+
+export {
+  assert,
+  assertInvariants,
+  AssertionError,
+  ContractError,
+  ensures,
+  findRescueHandler,
+  getCheckedMode,
+  iff,
+  implies,
+  invariant,
+  requires,
+  rescue,
+  setCheckedMode,
+} from "./contracts.ts";
+export type {
+  ContractMetadata,
+  EnsuresPredicate,
+  InvariantPredicate,
+  ParseFailure,
+  RequiresPredicate,
+  RescueHandler,
+} from "./contracts.ts";

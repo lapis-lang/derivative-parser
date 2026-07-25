@@ -64,6 +64,7 @@
 
 import { Grammar, rule } from "../src/index.ts";
 import type { Parser } from "../src/index.ts";
+import { assert, ensures, invariant, requires } from "../src/index.ts";
 
 /* ======================================================================
  *  Types
@@ -334,7 +335,13 @@ export interface STLCShape {
  * Subclasses implement the abstract semantic-action methods to choose the
  * representation (AST, Type, Value, TypedTerm) — the Bracha / initial-algebra
  * pattern from `arith.ts`.
+ *
+ * A class `@invariant` declares the well-formedness contract: the grammar's
+ * entry production must be defined (not `undefined`). This is checked before
+ * each `parse()` / `recognize()` call via `assertInvariants` (see
+ * `src/contracts.ts`).
  */
+@invariant((self: AbstractSTLC<STLCShape>) => self.start() !== undefined)
 export abstract class AbstractSTLC<S extends STLCShape> extends Grammar<S> {
   /* ── semantic actions ────────────────────────────────────────────── */
 
@@ -441,11 +448,18 @@ export abstract class AbstractSTLC<S extends STLCShape> extends Grammar<S> {
       this.ws, // 6
       this.char("."), // 7
       this.ws, // 8
-    ).chain(([, param, , , , ty]) =>
+    ).chain(([, param, , , , ty]) => {
       // τ is now available; extend ctx and parse body.
-      this.exprProd(this.extendCtx(ctx, param, ty))
-        .map((body) => this.lam(param, ty, body))
-    ).map(([, result]) => result);
+      // `assert` narrows the destructured tuple members (catching bracket-count
+      // bugs at parse time) — a Phase 0 proof of concept of inline assertions.
+      assert(typeof param === "string", "lambda param must be a string");
+      assert(
+        ty instanceof TVar || ty instanceof TFun,
+        "lambda type must be a Type",
+      );
+      return this.exprProd(this.extendCtx(ctx, param, ty))
+        .map((body) => this.lam(param, ty, body));
+    }).map(([, result]) => result);
   }
 
   /**
@@ -691,19 +705,43 @@ export class STLCTypeCheck
   protected lam(_param: string, type: Type, body: Type): Type {
     return new TFun(type, body);
   }
-  protected app(fn: Type, arg: Type): Type {
-    // Not used — App is handled via chain in appProd override below.
-    if (!(fn instanceof TFun)) return undefined as unknown as Type;
-    if (!typeEq(fn.dom, arg)) return undefined as unknown as Type;
-    return fn.cod;
+  /**
+   * Application typing rule (App): `fn` must be a function type whose domain
+   * matches `arg`'s type. Declared as `@requires` (the inference-rule
+   * premise) and `@ensures` (the conclusion: the result is a valid `Type`).
+   *
+   * On a failed premise, `@requires` returns `undefined` (graceful) — the
+   * calling `chain` callback produces `empty()`, so the ill-typed branch is
+   * rejected without raising an exception.
+   */
+  @requires((_self: STLCTypeCheck, fn: Type, arg: Type) =>
+    fn instanceof TFun && typeEq(fn.dom, arg)
+  )
+  @ensures(
+    (
+      _self: STLCTypeCheck,
+      _args: [Type, Type],
+      _old: STLCTypeCheck,
+      result: Type,
+    ) => result instanceof TVar || result instanceof TFun,
+  )
+  protected app(fn: Type, _arg: Type): Type {
+    // The premise is enforced by @requires; the body is the rule's conclusion.
+    return (fn as TFun).cod;
   }
   protected let_(_name: string, _type: Type, _def: Type, body: Type): Type {
     return body;
   }
+  /**
+   * Variable typing rule (Var): `name` must be bound in `ctx`. Declared as
+   * `@requires` — on failure returns `undefined` (graceful), so an unbound
+   * variable produces an empty parse forest rather than throwing.
+   */
+  @requires((_self: STLCTypeCheck, name: string, ctx: unknown) =>
+    ctx instanceof TypeEnv && ctx.lookup(name) !== undefined
+  )
   protected varRef(name: string, ctx: unknown): Type {
-    const ty = (ctx as TypeEnv).lookup(name);
-    if (!ty) return undefined as unknown as Type;
-    return ty;
+    return (ctx as TypeEnv).lookup(name) as Type;
   }
   protected boolLit(_b: boolean): Type {
     return new TVar("Bool");
@@ -719,6 +757,10 @@ export class STLCTypeCheck
    * Override `appProd` to type-check `App` via `chain`:
    * parse `fn` → get `fnTy`; parse `arg` → get `argTy`; if `fnTy` is a
    * function type and `fnTy.dom = argTy`, return `ε(fnTy.cod)`, else `∅`.
+   *
+   * (Full `@rescue` integration — emitting a diagnostic instead of a silent
+   * `∅` — requires zipper-engine hooks to detect the empty forest per
+   * production; that is deferred to a future phase. See issue #4 Phase 2.)
    */
   @rule
   protected override appProd(ctx: unknown): Parser<Type> {

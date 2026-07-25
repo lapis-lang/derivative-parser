@@ -11,9 +11,26 @@ import {
   ZipperDriver,
 } from "./zipper/zipper.ts";
 import { treeKey } from "./util/tree_key.ts";
+import {
+  _markProduction,
+  assertInvariants,
+  wrapWithContracts,
+} from "./contracts.ts";
 
 /** A shape interface maps production names to their parse-tree types. */
 export type GrammarShape = Record<string, unknown>;
+
+/**
+ * A diagnostic value carried through the parse forest by {@link diagnostic}.
+ * Collected by {@link Grammar.parseWithDiagnostics} to report parse-failure
+ * reasons (e.g. from `@rescue` handlers) without raising exceptions.
+ */
+export interface Diagnostic {
+  /** Machine-readable reason category, e.g. `"type-mismatch"`. */
+  reason: string;
+  /** Human-readable detail. */
+  message: string;
+}
 
 /**
  * `Grammar` — abstract base for executable, OO grammars.
@@ -39,6 +56,22 @@ export type GrammarShape = Record<string, unknown>;
  */
 
 export abstract class Grammar<S extends GrammarShape = GrammarShape> {
+  /**
+   * Constructs the grammar and, when contract checking is enabled, returns
+   * a `Proxy` that enforces `@requires` / `@ensures` / `@invariant` on
+   * every semantic-action call (see `src/contracts.ts`). The Proxy is
+   * transparent to `@rule` memoization: the `WeakMap` caches key on the
+   * unwrapped target, which the Proxy forwards to. When `checkedMode` is
+   * disabled, no Proxy is created (zero overhead).
+   *
+   * This replaces the reference library's `Contracted` base class + `.new()`
+   * factory: `new Grammar()` returns the Proxy directly, with no separate
+   * instantiation protocol.
+   */
+  constructor() {
+    return wrapWithContracts(this) as unknown as Grammar<S>;
+  }
+
   /**
    * Per-instance cache so `rule(body)` and `@rule get foo()` return the
    * same `Parser` (backed by a `DelayedExp`) per key.
@@ -120,6 +153,16 @@ export abstract class Grammar<S extends GrammarShape = GrammarShape> {
     return new Parser<T>(new EpsilonExp<T>(value));
   }
 
+  /**
+   * A diagnostic-bearing ε — always succeeds, contributing a {@link Diagnostic}
+   * value to the parse forest. Used inside `@rescue` handlers to report why
+   * a branch failed without raising an exception. Diagnostics are collected
+   * by {@link parseWithDiagnostics}.
+   */
+  protected diagnostic(message: string, reason = "error"): Parser<Diagnostic> {
+    return this.epsilon({ reason, message });
+  }
+
   /** Variadic alternation. */
   protected or<T>(...parsers: Parser<T>[]): Parser<T> {
     if (parsers.length === 0) return this.empty() as unknown as Parser<T>;
@@ -181,8 +224,12 @@ export abstract class Grammar<S extends GrammarShape = GrammarShape> {
   /**
    * Parse the input and return the set of all parse trees (the parse forest).
    * Empty set ⇒ rejection.
+   *
+   * If the grammar class declares `@invariant` contracts, they are checked
+   * before parsing begins (a well-formedness gate).
    */
   parse(input: string): Set<S[keyof S]> {
+    assertInvariants(this);
     return this._parseWith<S[keyof S]>(input, this.start());
   }
 
@@ -190,13 +237,18 @@ export abstract class Grammar<S extends GrammarShape = GrammarShape> {
    * Drive the zipper engine with an arbitrary start parser — useful for
    * grammars whose entry production is parameterised (e.g. by an inherited
    * environment).  Subclasses call this from a custom `parseWith(...)` method.
+   *
+   * If the grammar class declares `@invariant` contracts, they are checked
+   * before parsing begins.
    */
   protected _parseWith<T>(input: string, start: Parser<T>): Set<T> {
+    assertInvariants(this);
     return new ZipperDriver().parse<T>(start._exp, this._toTokens(input));
   }
 
   /** Pure recognition — true iff input is in the language. */
   recognize(input: string): boolean {
+    assertInvariants(this);
     return new ZipperDriver().recognize(
       this.start()._exp,
       this._toTokens(input),
@@ -264,18 +316,20 @@ export function rule(
   ctx: RuleGetterCtx | RuleMethodCtx,
 ): (this: Grammar, ...args: unknown[]) => Parser<unknown> {
   if (ctx.kind === "getter") {
-    return function (this: Grammar): Parser<unknown> {
+    return _markProduction(function (this: Grammar): Parser<unknown> {
       return this._ruleSlot(target, () => target.call(this));
-    };
+    });
   }
   if (ctx.kind === "method") {
-    return function (this: Grammar, ...args: unknown[]): Parser<unknown> {
-      return this._paramRuleSlot(
-        target,
-        treeKey(args),
-        () => target.apply(this, args),
-      );
-    };
+    return _markProduction(
+      function (this: Grammar, ...args: unknown[]): Parser<unknown> {
+        return this._paramRuleSlot(
+          target,
+          treeKey(args),
+          () => target.apply(this, args),
+        );
+      },
+    );
   }
   throw new Error(`@rule cannot decorate a ${(ctx as { kind: string }).kind}`);
 }
