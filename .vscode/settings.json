@@ -2,8 +2,10 @@
   "deno.enable": true,
   "deno.config": "./deno.json",
   "deno.lint": true,
+  "editor.formatOnSave": true,
   "explorer.fileNesting.enabled": true,
   "explorer.fileNesting.patterns": {
-    "deno.json": "deno.lock, .devcontainer"
+    "deno.json": "deno.lock, .devcontainer",
+    "devcontainer.json": "devcontainer-lock.json"
   }
 }
