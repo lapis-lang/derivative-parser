@@ -1,0 +1,11 @@
+{
+  "name": "lapis-lang",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": ["denoland.vscode-deno"]
+    }
+  }
+}
