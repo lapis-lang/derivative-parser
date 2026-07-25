@@ -52,7 +52,7 @@ class Traced extends MathEval {
 ```
 
 Composition by inheritance, not by re-defining the grammar from scratch. See
-[examples/arith.mts](examples/arith.mts).
+[examples/arith.ts](examples/arith.ts).
 
 ## Shape-typed grammars
 
@@ -120,8 +120,79 @@ class IndentLang extends Grammar<{ doc: Node[] }> {
 }
 ```
 
-See [examples/indent.mts](examples/indent.mts) for the full working example,
+See [examples/indent.ts](examples/indent.ts) for the full working example,
 including `key` and `value` productions.
+
+## Semantics as grammars
+
+Inference rules and grammar productions are two sides of the same coin.
+A typing judgment `Γ ⊢ e : τ` can be encoded as a parameterised production
+`expr(Γ): Parser<Type>`; an evaluation judgment `ρ ⊢ e ⇓ v` as
+`expr(ρ): Parser<Value>`.  The grammar is no longer merely recognising
+syntax — it is *deriving judgments*.
+
+This connection is well-known in the attribute-grammar tradition:
+
+| Attribute grammar concept       | This library                              |
+| ------------------------------- | ----------------------------------------- |
+| Inherited attributes (top-down) | `@rule expr(Γ)` method arguments          |
+| Synthesized attributes (bottom-up) | `.map((val, span) => ...)`             |
+| Two-phase evaluation            | `super.expr.map(evalFn)` (multi-pass)     |
+| L-attributed one-pass            | `chain(first, fn)` — monadic bind          |
+
+### Two patterns for semantics
+
+**Pattern 1 — multi-pass via `super`**: a subclass calls
+`super.expr.map(evalFn)` where `evalFn` is a separate recursive function over
+the AST.  Open recursion (OOP subclassing) gives pass composition for free —
+the class hierarchy *is* the compiler pipeline.  Use when the context depends
+on a *synthesized* attribute (e.g. `let x = def in body` needs `def`'s value
+before evaluating `body`).
+
+**Pattern 2 — one-pass judgments-as-productions**: restructure productions
+with a context parameter `@rule expr(Γ): Parser<Type>`.  Use when context
+extensions are *syntactic* — e.g. `λx:τ.body` extends `Γ` with `x:τ` where `τ`
+is an annotation parsed *before* the body.
+
+### The `chain` combinator (monadic bind)
+
+The key enabler for Pattern 2 is `chain` — monadic bind for parsers.  It
+parses the first parser, then — *after* it completes — calls a function with
+the result to construct the second parser.  This lets a left sibling's
+*synthesized* value determine the right sibling's *inherited* context,
+which is exactly the **L-attributed grammar** pattern:
+
+```ts
+@rule
+protected lambdaProd(ctx: unknown): Parser<S['expr']> {
+    return this.seq(
+        this.lambdaHead, this.ident, this.ws, this.char(':'), this.ws,
+        this.type, this.ws, this.char('.'), this.ws,
+    ).chain(([, param, , , , ty, , , ]) =>
+        // τ is now available; extend ctx and parse body.
+        this.exprProd(this.extendCtx(ctx, param, ty))
+            .map((body) => this.lam(param, ty, body))
+    ).map(([, result]) => result);
+}
+```
+
+Without `chain`, `seq` builds all children eagerly at construction time, so
+the parsed `τ` cannot flow into `body`'s parser.  `chain` defers construction
+of the second parser until the first has completed — exactly when the zipper
+reaches that point in the left-to-right traversal.
+
+### Examples
+
+| Example | Pattern | Demonstrates |
+| ------- | ------- | ------------- |
+| `arith-var.ts` | Pattern 2 (read-only env) | Inherited attributes, variable lookup |
+| `stlc.ts` | Both | One-pass type checking (Pattern 2), multi-pass evaluation (Pattern 1), proof-bearing type checking |
+| `proplogic.ts` | Both | Truth evaluation (Pattern 2), natural-deduction proofs (Pattern 1) |
+| `lambda-eval.ts` | Pattern 1 | Untyped evaluation via multi-pass |
+
+See [examples/stlc.ts](examples/stlc.ts) for the headline example: Simply
+Typed Lambda Calculus with four interpretations (AST, type checker,
+evaluator, proof-bearing type checker) over one abstract grammar.
 
 ## Source positions
 
@@ -166,6 +237,7 @@ Subclass and define productions as `@rule` getters (or methods) returning
 | `empty()`                           | ∅ — the failing parser.                    |
 | `or(...parsers)`                    | Variadic alternation.                      |
 | `seq(...parsers)`                   | Variadic concatenation; returns tuple.     |
+| `chain(first, fn)`                  | Monadic bind — L-attributed grammar combinator. `fn` receives the first parser's result and returns the next parser. Result is `[T, U]`. |
 | `parse(input)` / `recognize(input)` | Drivers — full forest / boolean.           |
 
 The `@rule` decorator can wrap either a **getter** or a **method**:
@@ -183,8 +255,190 @@ The `@rule` decorator can wrap either a **getter** or a **method**:
 | `or(other)` | A ∪ B                                           |
 | `then(other)`| A ○ B — parse trees are pairs `[T, U]`.        |
 | `map(f)`    | Semantic action. `f` receives `(value: T, span: Span)` where `Span = { start: number; end: number }` is the half-open character-offset range `[start, end)` of the matched input. |
+| `chain(fn)` | Monadic bind. `fn` receives the parsed value `T` and returns a `Parser<U>`; result is `Parser<[T, U]>`. Enables L-attributed one-pass parsing. |
 | `many()`    | A\* — parse trees are arrays `T[]`.             |
 | `opt()`     | A ∪ ε — parse trees are `T \| undefined`.       |
+
+## How it works
+
+The parsing engine is **Parsing with Zippers** (Darragh & Adams, ICFP 2020).
+
+### Why not derivatives?
+
+Brzozowski derivatives are an elegant parsing technique: for each input
+character, you compute a *new grammar* that represents "what's left to
+parse." The derivative of `'a' 'b'` with respect to `'a'` is `'b'`; the
+derivative of `'b'` with respect to `'b'` is ε (success).
+
+The problem is **cost**: each derivative step rewrites the *entire grammar
+tree*, producing a new tree. For ambiguous grammars, the trees grow
+exponentially — every alternative spawns a copy, and copies of copies
+compound. Sharing can help, but detecting equality on cyclic grammar graphs
+is expensive, and semantic actions (which carry arbitrary values) make
+equality checks impractical.
+
+PwZ takes a different approach: **don't rewrite the grammar — walk it.**
+
+### The zipper approach
+
+Instead of computing global Brzozowski derivatives, the engine maintains a
+*worklist of zippers* — each zipper is a **cursor** that walks through the
+grammar tree, one step per character — and **shares notes** when cursors
+meet at the same node.
+
+### The analogy
+
+The grammar is a **maze** (a tree of rooms); the input is a **sequence of
+keys**. Each zipper is a person walking through the maze with a notepad. At
+each step (one key), every person advances one room. People who hit a locked
+door (token mismatch) disappear. People who reach the exit are the parse
+results. If two people arrive at the same room at the same time, they
+**share notes** (memoization) instead of re-exploring.
+
+### A tiny example
+
+Grammar: `S ::= 'a' 'b'` (match the string `"ab"`)
+
+```mermaid
+graph TD
+    Seq["Seq (sequence)"]
+    A["Tok('a')"]
+    B["Tok('b')"]
+    Seq --> A
+    Seq --> B
+```
+
+**Step 1 — input `'a'`:** the zipper descends into `Seq` → first child
+`Tok('a')`. The token matches → **completes** with value `"a"`, goes **up**
+to `Seq`, which advances to the next child `Tok('b')`.
+
+```mermaid
+graph LR
+    subgraph "Grammar tree"
+    Seq["Seq"]
+    A["Tok('a') ✓"]
+    B["Tok('b')"]
+    Seq --> A
+    Seq --> B
+    end
+    subgraph "Zipper"
+    Z1["📍 at Tok('b')<br/>accumulated: ['a']"]
+    end
+    Z1 -.-> B
+```
+
+**Step 2 — input `'b'`:** the zipper is at `Tok('b')`. The token matches →
+**completes** with value `"b"`, goes **up** to `Seq` — no more children →
+`Seq` **completes** with `["a", "b"]`.
+
+**Result:** `["a", "b"]` ✓
+
+### Ambiguity: multiple zippers
+
+Grammar: `S ::= S '+' S | '1'` (match `"1+1+1"` — two valid parse trees).
+Multiple zippers explore different branches *simultaneously*:
+
+```mermaid
+graph LR
+    subgraph "Step 1 (input '1')"
+    Z1["📍 Branch A<br/>→ Tok('1')"]
+    Z2["📍 Branch B<br/>→ S (recursive)"]
+    end
+```
+
+```mermaid
+graph LR
+    subgraph "Step 2 (input '+')"
+    Z1["📍 Branch A<br/>matched '+',<br/>now at right S"]
+    Z2["📍 Branch B<br/>still exploring..."]
+    Z3["📍 Branch C<br/>another path"]
+    end
+```
+
+Each zipper carries its own accumulated value. At the end, all zippers that
+reach the exit produce a **parse forest** — one tree per valid parse.
+
+### The key trick: sharing notes (memoization)
+
+When two zippers reach the **same grammar node** at the **same input
+position**, they don't re-explore — they share:
+
+```mermaid
+graph TD
+    subgraph "Without memoization: exponential"
+    Z1["Zipper 1 at node S, pos 3"]
+    Z2["Zipper 2 at node S, pos 3"]
+    Z1 --> R1["Re-explore S (wasted)"]
+    Z2 --> R2["Re-explore S (wasted)"]
+    end
+```
+
+```mermaid
+graph TD
+    subgraph "With PwZ memoization: polynomial"
+    Z1["Zipper 1 at node S, pos 3"]
+    Z2["Zipper 2 at node S, pos 3"]
+    Z1 --> M["Shared Mem (explored once)"]
+    Z2 --> M
+    M --> R["Result reused by both"]
+    end
+```
+
+This is what makes PwZ **polynomial time** on ambiguous grammars — the
+sharing prevents exponential blowup. The `Mem` object is the "shared
+notepad": when a zipper arrives at a node it's already visited at this
+position, it just threads its parent context into the existing memo and
+reuses the already-computed values.
+
+### Left recursion: the other trick
+
+Traditional top-down parsers choke on left recursion (`S ::= S '+' S | '1'`)
+because `S` calls `S` infinitely. PwZ handles it because of memoization:
+
+```mermaid
+graph LR
+    subgraph "Left recursion in PwZ"
+    S1["S called at pos 0<br/>→ creates Mem (empty)"]
+    S1 --> S2["S calls S again at pos 0<br/>→ same Mem! Not re-explored"]
+    S2 --> S3["S falls through to '1'<br/>→ Mem now has result"]
+    S3 --> S4["S called again at pos 0<br/>→ Mem has result, reuses it"]
+    end
+```
+
+The first visit creates an (empty) memo. The recursive call hits the same
+memo — it doesn't loop infinitely, it just waits. When the base case (`'1'`)
+completes, the memo fills in, and the recursive call picks up the result.
+This is the "seed growing" pattern: the memo starts empty and grows as the
+parse progresses.
+
+### Summary
+
+```mermaid
+graph TB
+    Input["Input: 'a', 'b', 'c', ..."]
+    Step["step(token) — one per character"]
+    Worklist["Worklist of zippers<br/>(one per parse branch)"]
+    Descend["Descend: go deeper<br/>into grammar tree"]
+    Match["Match: token vs grammar node"]
+    Complete["Complete: go up to parent<br/>with semantic value"]
+    Memo["Memo: same node + same pos?<br/>→ share results"]
+    Forest["Parse forest:<br/>all zippers that exit"]
+
+    Input --> Step
+    Step --> Worklist
+    Worklist --> Descend
+    Descend --> Match
+    Match -->|match| Complete
+    Match -->|no match| Dead["Dead end: zipper removed"]
+    Complete --> Memo
+    Memo --> Worklist
+    Complete -->|all children done| Forest
+```
+
+PwZ in a nutshell: **cursors walking a tree, sharing notes, handling
+ambiguity and left recursion through memoization**. The rest (semantic
+actions, `chain`, `@rule`, shape-typed grammars) is built on top of this
+core mechanism.
 
 ## Algorithm
 
@@ -253,15 +507,23 @@ src/
 examples/
   arith.ts           — shape-typed arithmetic + Bracha-style override
   arith-demo.ts      — runnable demo
+  arith-var.ts        — arithmetic with variables; inherited attributes (read-only env)
+  arith-var-demo.ts   — runnable demo
   csv.ts             — CSV parser example
   indent.ts          — significant-whitespace (indentation-sensitive) grammar; demonstrates @rule methods (parameterised productions) and Span offsets
   json.ts            — JSON parser example
-  lambda.ts          — lambda-calculus parser example
+  lambda-eval.ts     — untyped lambda calculus: AST builder + call-by-value evaluator (multi-pass)
+  lambda-eval-demo.ts — runnable demo
+  proplogic.ts       — propositional logic: formulas, truth-table evaluator, natural-deduction proofs
+  proplogic-demo.ts   — runnable demo
   scaling-bench.ts   — PwZ scaling benchmark
+  stlc.ts             — Simply Typed Lambda Calculus: AST, one-pass type checker, evaluator, proof-bearing type checker
+  stlc-demo.ts        — runnable demo
 test/
   parser-algebra.test.ts       — unit tests for Parser combinators
   recognition.test.ts          — left-recursive / ambiguous grammars
   grammar-composition.test.ts  — shape-typed grammars + Bracha override
+  semantics.test.ts            — semantic examples (type checking, evaluation, proofs)
 ```
 
 ## Scripts
