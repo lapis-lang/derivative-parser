@@ -13,18 +13,25 @@
 interface DocNode {
   name: string;
   kind?: string;
-  jsDoc?: { doc?: string } | null;
+  jsDoc?: JsDoc | null;
 }
 
 interface Declaration {
   declarationKind: string;
   kind: string;
-  jsDoc?: { doc?: string } | null;
+  jsDoc?: JsDoc | null;
   def?: {
     properties?: DocNode[];
     methods?: DocNode[];
   };
 }
+
+/**
+ * `jsDoc` in `deno doc --json` is an object (`{ doc?, tags? }`) in current
+ * Deno, but has historically also been emitted as a plain string. Support
+ * both to avoid false negatives or crashes across versions.
+ */
+type JsDoc = string | { doc?: string; tags?: unknown[] };
 
 interface Symbol {
   name: string;
@@ -52,8 +59,11 @@ const doc = JSON.parse(new TextDecoder().decode(stdout)) as DocJson;
 
 const missing: string[] = [];
 
-function hasDoc(node: { jsDoc?: { doc?: string } | null }): boolean {
-  return Boolean(node.jsDoc?.doc?.trim());
+function hasDoc(node: { jsDoc?: JsDoc | null }): boolean {
+  const { jsDoc } = node;
+  if (jsDoc == null) return false;
+  if (typeof jsDoc === "string") return jsDoc.trim().length > 0;
+  return Boolean(jsDoc.doc?.trim());
 }
 
 /** Public class members: non-private, non-internal-by-convention. */
@@ -75,7 +85,9 @@ for (const file of Object.values(doc.nodes)) {
     if (decl.kind === "class") {
       for (const member of publicMembers(decl.def)) {
         if (!hasDoc(member)) {
-          missing.push(`${sym.name}.${member.name} (${member.kind ?? "member"})`);
+          missing.push(
+            `${sym.name}.${member.name} (${member.kind ?? "member"})`,
+          );
         }
       }
     }

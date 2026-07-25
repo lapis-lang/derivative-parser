@@ -2,7 +2,7 @@
  * Thin, type-safe wrapper around a PwZ `Exp` node.
  *
  * `Parser<T>` is the user-facing type for all combinators. It carries the
- * underlying `Exp` (from `src/zipper/zipper.mts`) and exposes the fluent
+ * underlying `Exp` (from `src/zipper/zipper.ts`) and exposes the fluent
  * algebra that `Grammar` uses to build grammars. No derivative machinery,
  * no Pool — those concerns now live entirely in the zipper engine.
  */
