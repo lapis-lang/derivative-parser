@@ -57,6 +57,9 @@ const _ = new class extends Grammar<{ r: unknown }> {
   override literal(s: string) {
     return super.literal(s);
   }
+  override chain<T, U>(first: Parser<T>, fn: (t: T) => Parser<U>): Parser<[T, U]> {
+    return super.chain(first, fn);
+  }
 }();
 
 /* ─── Empty ──────────────────────────────────────────────────────────── */
@@ -229,5 +232,146 @@ Deno.test("opt (A?)", async (t) => {
   });
   await t.step("accepts the token", () => {
     assertEquals(parse(mA, "a"), ["a"]);
+  });
+});
+
+/* ─── exception guards ───────────────────────────────────────────────── */
+
+Deno.test("map — throwing semantic action drops the branch", () => {
+  // A .map() callback that throws should not crash the parse driver;
+  // the branch is silently dropped (empty parse forest).
+  const p = _.char("a").map(() => { throw new Error("boom"); });
+  assertEquals(parse(p, "a"), []);
+});
+
+Deno.test("chain — throwing callback drops the branch", () => {
+  // A chain callback that throws should not crash the parse driver;
+  // the branch is silently dropped.
+  const p = _.chain(_.char("a"), () => { throw new Error("boom"); });
+  assertEquals(parse(p, "a"), []);
+});
+
+Deno.test("map — non-throwing branch still succeeds alongside a throwing one", () => {
+  // In an alternation, one branch's .map() throws but the other succeeds.
+  const p = _.or(
+    _.char("a").map(() => { throw new Error("boom"); }),
+    _.char("a").map(() => "ok"),
+  );
+  assertEquals(parse(p, "a"), ["ok"]);
+});
+
+/* ─── chain (monadic bind) ───────────────────────────────────────────── */
+
+Deno.test("chain — basic [T, U] pairing", async (t) => {
+  // Parse 'a', then use the result to parse 'b'. Result is ["a", "b"].
+  const p = _.chain(_.char("a"), () => _.char("b"));
+
+  await t.step("parses 'ab' as ['a', 'b']", () => {
+    assertEquals(parse(p, "ab"), [["a", "b"]]);
+  });
+  await t.step("rejects 'ax'", () => {
+    assertEquals(parse(p, "ax"), []);
+  });
+  await t.step("rejects 'a' (missing second)", () => {
+    assertEquals(parse(p, "a"), []);
+  });
+});
+
+Deno.test("chain — second parser depends on first result", async (t) => {
+  // Parse a char, then use it to decide what to parse next.
+  // If 'a' → expect '1'; if 'b' → expect '2'.
+  const p = _.chain(_.char("a").or(_.char("b")), (x) =>
+    x === "a" ? _.char("1") : _.char("2"),
+  );
+
+  await t.step("'a1' → ['a', '1']", () => {
+    assertEquals(parse(p, "a1"), [["a", "1"]]);
+  });
+  await t.step("'b2' → ['b', '2']", () => {
+    assertEquals(parse(p, "b2"), [["b", "2"]]);
+  });
+  await t.step("'a2' rejected (wrong second)", () => {
+    assertEquals(parse(p, "a2"), []);
+  });
+});
+
+Deno.test("chain — ambiguity: multiple first results produce multiple pairs", async (t) => {
+  // Ambiguous first parser: 'a' | 'a' produces two parse trees.
+  // Each triggers the chain callback, producing two ['a', 'b'] pairs.
+  const p = _.chain(_.char("a").or(_.char("a")), () => _.char("b"));
+
+  await t.step("'ab' produces two ['a', 'b'] pairs", () => {
+    const results = parse(p, "ab");
+    assertEquals(results.length, 2);
+    assertEquals(results[0], ["a", "b"]);
+    assertEquals(results[1], ["a", "b"]);
+  });
+});
+
+Deno.test("chain — first parser fails → empty forest", async (t) => {
+  const p = _.chain(_.empty(), () => _.char("b"));
+
+  await t.step("produces no parse trees", () => {
+    assertEquals(parse(p, "b"), []);
+  });
+});
+
+Deno.test("chain — second parser fails → empty forest", async (t) => {
+  const p = _.chain(_.char("a"), () => _.empty());
+
+  await t.step("produces no parse trees", () => {
+    assertEquals(parse(p, "a"), []);
+  });
+});
+
+Deno.test("chain — interaction with left recursion", async (t) => {
+  // Left-recursive grammar using chain: S ::= S 'a' | 'a'
+  // Each chain step appends 'a' to the accumulated string.
+  const { rule } = await import("../src/index.ts");
+  class LR extends Grammar<{ s: string }> {
+    override start(): Parser<string> {
+      return this.s;
+    }
+    @rule get s(): Parser<string> {
+      return this.or(
+        this.chain(this.s, (l: string) => this.char("a").map((r) => l + r))
+          .map(([, result]) => result),
+        this.char("a"),
+      );
+    }
+  }
+
+  await t.step("'a' → ['a']", () => {
+    assertEquals([...new LR().parse("a")], ["a"]);
+  });
+  await t.step("'aa' → ['aa']", () => {
+    assertEquals([...new LR().parse("aa")], ["aa"]);
+  });
+  await t.step("'aaa' → ['aaa']", () => {
+    assertEquals([...new LR().parse("aaa")], ["aaa"]);
+  });
+});
+
+Deno.test("chain — nested chain flattening", async (t) => {
+  // chain(a, a => chain(b, b => c)) → [["a", ["b", "c"]]
+  // With .map extraction: flatten to just "c"
+  const p = _.chain(_.char("a"), () =>
+    _.chain(_.char("b"), () => _.char("c")).map(([, r]) => r),
+  ).map(([, r]) => r);
+
+  await t.step("'abc' → ['c'] (flattened)", () => {
+    assertEquals(parse(p, "abc"), ["c"]);
+  });
+});
+
+Deno.test("chain — epsilon as first or second", async (t) => {
+  await t.step("epsilon first: [42, 'a']", () => {
+    const p = _.chain(_.epsilon(42), () => _.char("a"));
+    assertEquals(parse(p, "a"), [[42, "a"]]);
+  });
+
+  await t.step("epsilon second: ['a', 99]", () => {
+    const p = _.chain(_.char("a"), () => _.epsilon(99));
+    assertEquals(parse(p, "a"), [["a", 99]]);
   });
 });

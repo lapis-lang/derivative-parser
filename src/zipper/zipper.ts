@@ -235,6 +235,49 @@ export class DelayedExp<T = unknown> extends Exp {
   }
 }
 
+/**
+ * Monadic bind — the L-attributed grammar combinator.
+ *
+ * Parses `first`; for each value `v` it produces, calls `fn(v)` to obtain
+ * the second parser and descends into it.  The final value is the pair
+ * `[v, w]` where `w` is the second parser's result.
+ *
+ * This enables **one-pass** context threading where a *synthesised*
+ * attribute of the left sibling determines the *inherited* context of the
+ * right sibling — the L-attributed grammar pattern.  For example, in
+ * `λx:τ. body`, the type `τ` (parsed first) extends the type environment `Γ`
+ * before parsing `body`:
+ *
+ *   this.chain(this.type, (ty) => this.expr(Γ.extend(name, ty)))
+ *
+ * Without `chain`, `seq` builds all children eagerly at construction time,
+ * so the parsed `τ` cannot flow into `body`'s parser.  `chain` defers
+ * construction of the second parser until the first has completed, exactly
+ * when the zipper reaches that point in the left-to-right traversal.
+ *
+ * **Memoisation caveat**: the second parser is constructed fresh per
+ * parse-tree of `first`.  If `first` is ambiguous (multiple parse trees),
+ * `fn` is called multiple times, producing distinct `Exp` nodes.  Each gets
+ * its own `Mem` slot, so there is no cross-contamination.  However, the
+ * `@rule` decorator's per-argument memoisation does not apply to the
+ * dynamically-constructed second parser — it is not cached.  For grammars
+ * where the second parser is a `@rule` method call (e.g.
+ * `this.expr(Γ')`), the `@rule` cache *does* kick in because the method is
+ * called through the decorated wrapper.
+ */
+export class ChainExp<A = unknown, B = unknown> extends Exp {
+  constructor(
+    readonly first: Exp,
+    readonly fn: (a: A) => Exp,
+  ) {
+    super();
+  }
+
+  descend(driver: ZipperDriver, m: Mem): void {
+    this.first.goDown(driver, new ChainCxt(m, this.fn as (a: unknown) => Exp));
+  }
+}
+
 /* ─── Cxt hierarchy ──────────────────────────────────────────────────── */
 
 /** Parent context — knows how to propagate a completed value upward. */
@@ -290,6 +333,47 @@ export class AltCxt extends Cxt {
   }
 }
 
+/**
+ * Monadic-bind context: receives `first`'s value, calls `fn` to build the
+ * second parser, descends into it.  When the second completes, flows the
+ * pair `[firstVal, secondVal]` upward.
+ */
+export class ChainCxt extends Cxt {
+  constructor(
+    readonly m: Mem,
+    readonly fn: (a: unknown) => Exp,
+  ) {
+    super();
+  }
+
+  goUp(driver: ZipperDriver, value: unknown): void {
+    // Guard: if the user-provided `fn` throws (e.g. a `chain` callback
+    // that constructs an invalid parser), treat this branch as failed —
+    // the parse tree is silently dropped, consistent with the parse-forest
+    // model where a failed semantic action means that tree doesn't exist.
+    let second: Exp;
+    try {
+      second = this.fn(value);
+    } catch {
+      return;
+    }
+    second.goDown(driver, new ChainSecondCxt(this.m, value));
+  }
+}
+
+/** Second half of `chain`: receives the second parser's value, emits the pair. */
+export class ChainSecondCxt extends Cxt {
+  constructor(
+    readonly m: Mem,
+    readonly firstVal: unknown,
+  ) {
+    super();
+  }
+  goUp(driver: ZipperDriver, value: unknown): void {
+    driver.completeAt(this.m, [this.firstVal, value]);
+  }
+}
+
 /** Applies a semantic function to an incoming value, then flows upward. */
 export class RedCxt extends Cxt {
   constructor(
@@ -301,7 +385,17 @@ export class RedCxt extends Cxt {
   goUp(driver: ZipperDriver, value: unknown): void {
     const start = driver.posToOffset.get(this.m.startPos) ?? 0;
     const end = driver.posToOffset.get(driver.pos) ?? start;
-    driver.completeAt(this.m, this.fn(value, { start, end }));
+    // Guard: if the user-provided semantic action (`fn`) throws, treat
+    // this branch as failed — the parse tree is silently dropped.
+    // This is consistent with the parse-forest model: a failed `.map()`
+    // callback means that parse tree doesn't exist.
+    let result: unknown;
+    try {
+      result = this.fn(value, { start, end });
+    } catch {
+      return;
+    }
+    driver.completeAt(this.m, result);
   }
 }
 

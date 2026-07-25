@@ -141,6 +141,23 @@ export abstract class Grammar<S extends GrammarShape = GrammarShape> {
   }
 
   /**
+   * Monadic bind — the L-attributed grammar combinator.  See `Parser.chain`
+   * for details.  Provided as a `Grammar` helper for consistency with
+   * `seq`/`or`.
+   *
+   * Parse `first`; for each value `v`, call `fn(v)` to obtain the next parser
+   * and parse it.  The result is the pair `[v, w]`.  This enables one-pass
+   * context threading where a left sibling's *synthesised* value determines
+   * the right sibling's *inherited* context.
+   */
+  protected chain<T, U>(
+    first: Parser<T>,
+    fn: (t: T) => Parser<U>,
+  ): Parser<[T, U]> {
+    return first.chain(fn);
+  }
+
+  /**
    * Wrap a production body in a memoised lazy reference (legacy thunk form).
    * Prefer the `@rule` decorator for new code.
    */
@@ -166,10 +183,16 @@ export abstract class Grammar<S extends GrammarShape = GrammarShape> {
    * Empty set ⇒ rejection.
    */
   parse(input: string): Set<S[keyof S]> {
-    return new ZipperDriver().parse<S[keyof S]>(
-      this.start()._exp,
-      this._toTokens(input),
-    );
+    return this._parseWith<S[keyof S]>(input, this.start());
+  }
+
+  /**
+   * Drive the zipper engine with an arbitrary start parser — useful for
+   * grammars whose entry production is parameterised (e.g. by an inherited
+   * environment).  Subclasses call this from a custom `parseWith(...)` method.
+   */
+  protected _parseWith<T>(input: string, start: Parser<T>): Set<T> {
+    return new ZipperDriver().parse<T>(start._exp, this._toTokens(input));
   }
 
   /** Pure recognition — true iff input is in the language. */

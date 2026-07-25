@@ -1,5 +1,5 @@
 /**
- * Runnable demo for `npm run example`.
+ * Runnable demo for `deno task example`.
  *
  * Evaluates a few arithmetic expressions, prints the AST for one of them,
  * and demonstrates the Bracha-style production override.
