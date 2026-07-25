@@ -23,7 +23,7 @@
  *          └─ DelayedExp
  *
  * Each `Exp` subclass implements `descend(driver, m)`; each `Cxt` subclass
- * implements `goUp(driver, e, value)`. The driver holds all mutable
+ * implements `goUp(driver, value)`. The driver holds all mutable
  * derivation state (`worklist`, `topValues`, `pos`, `currentToken`),
  * making the engine re-entrant by construction.
  */
@@ -388,10 +388,9 @@ export class ZipperDriver {
 
   private _init(start: Exp): void {
     this.topValues = [];
-    // Reset to the default (full-forest) mode. `recognize()` sets this to
-    // true before calling `parse()`, so the order here preserves that; a
-    // driver reused after a `recognize()` call won't leak the suppression
-    // flag into a subsequent `parse()`.
+    // Reset to the default (full-forest) mode so a driver reused after a
+    // `recognize()` call doesn't leak the suppression flag into a later
+    // `parse()`. `recognize()` re-enables this after `_init()` returns.
     this.recognizeOnly = false;
     this.posToOffset.clear();
     const initialPos = freshPos();
