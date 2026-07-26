@@ -10,10 +10,13 @@ import {
   digits as digitsLexeme,
   empty,
   epsilon,
+  flattenTree,
   ident as identLexeme,
   literal,
   or,
+  parserOf,
   seq,
+  TreeExp,
   ws as wsLexeme,
   ws1 as ws1Lexeme,
 } from "../src/index.ts";
@@ -611,55 +614,175 @@ export class STLCTypeCheck
 }
 
 /* ======================================================================
- *  Concrete: evaluator  — `expr(ρ): Parser<Value>`
+ *  Concrete: evaluator  — `expr(ρ): Parser<Value>`  (tree-consuming grammar)
  * ====================================================================== */
 
 /**
- * Multi-pass evaluator.  Extends `STLCAST`; parses to AST via `super`,
- * then evaluates with `evalTerm`.
+ * Children extractor for {@link Term} trees, used by {@link STLCEval}.
+ * Returns a node's children in source order so {@link flattenTree} produces a
+ * preorder stream that the tree-grammar matches positionally.
  */
-export class STLCEval extends STLCAST {
-  /**
-   * Parse to AST (via `super`) then evaluate under `env`.
-   * The grammar builds the AST; `evalTerm` is the evaluation judgment.
-   */
+function termChildren(node: unknown, tag: string): readonly unknown[] {
+  switch (tag) {
+    case "Var":
+    case "BoolLit":
+    case "IntLit":
+      return [];
+    case "Lam":
+      return [(node as Lam).body];
+    case "App":
+      return [(node as App).fn, (node as App).arg];
+    case "Let":
+      return [(node as Let).def, (node as Let).body];
+    default:
+      return [];
+  }
+}
+
+/**
+ * Evaluator as a **tree-consuming grammar**.  Instead of extending `STLCAST`
+ * and bolting on a recursive `evalTerm`, this is a grammar whose input is a
+ * flattened {@link Term} tree and whose semantic actions are the evaluation
+ * rules `ρ ⊢ e ⇓ v`.  Each production is a {@link TreeExp} matching a `Term`
+ * node by class name; the inherited context `ρ` (`ValEnv`) is threaded via
+ * the parameterised `@rule` method `evalExpr(env)`.
+ *
+ * The higher-order step — applying a closure to an argument — is a nested
+ * tree-parse: `app` re-parses the closure's body subtree under the extended
+ * environment.  This is a higher-order attribute: a semantic action that
+ * produces a new tree fragment (the body, re-decorated under `ρ[x:=v]`)
+ * which the engine evaluates on demand.  Per-pass memo isolation (Layer 0)
+ * makes the nested re-entry safe.
+ */
+export class STLCEval extends Grammar<{ expr: Value }> {
+  /** Parse source to AST (via `STLCAST`), then evaluate each AST as a tree. */
   parseWith(input: string, env: ValEnv): Set<Value> {
-    const asts = [...this._parseWith(input, this.start())];
+    const asts = [...new STLCAST().parse(input)] as Term[];
     const results = new Set<Value>();
     for (const ast of asts) {
       try {
-        results.add(evalTerm(ast as Term, env));
+        const toks = flattenTree(ast, termChildren);
+        for (const v of this._parseTreeWith(toks, this.evalExpr(env))) {
+          results.add(v);
+        }
       } catch {
-        // ill-typed or stuck term — skip
+        // stuck term — skip
       }
     }
     return results;
   }
-}
 
-/** Call-by-value evaluation judgment `ρ ⊢ e ⇓ v` as a syntax-directed recursive function. */
-export function evalTerm(term: Term, env: ValEnv): Value {
-  if (term instanceof Var) {
-    const v = env.lookup(term.name);
-    if (v === undefined) throw new Error(`unbound variable: ${term.name}`);
-    return v;
+  override start(): Parser<Value> {
+    return this.evalExpr(ValEnv.empty());
   }
-  if (term instanceof Lam) {
-    return new Closure(term.param, term.type, term.body, env);
+
+  /** `ρ ⊢ e ⇓ v` — the evaluation judgment, parameterised by the value env. */
+  @rule
+  evalExpr(env: ValEnv): Parser<Value> {
+    return or(
+      this.evalVar(env),
+      this.evalLam(env),
+      this.evalApp(env),
+      this.evalLet(env),
+      this.evalBool(env),
+      this.evalInt(env),
+    );
   }
-  if (term instanceof App) {
-    const fn = evalTerm(term.fn, env);
-    const arg = evalTerm(term.arg, env);
-    if (!(fn instanceof Closure)) throw new Error(`cannot apply non-function`);
-    return evalTerm(fn.body as Term, (fn.env as ValEnv).extend(fn.param, arg));
+
+  /** Var: `ρ ⊢ x ⇓ ρ(x)`. */
+  protected evalVar(env: ValEnv): Parser<Value> {
+    return parserOf<Value>(
+      new TreeExp("Var", [], (node: unknown) => {
+        const v = env.lookup((node as Var).name);
+        if (v === undefined) throw new Error(`unbound variable`);
+        return v;
+      }),
+    );
   }
-  if (term instanceof Let) {
-    const defVal = evalTerm(term.def, env);
-    return evalTerm(term.body, env.extend(term.name, defVal));
+
+  /** Lam: `ρ ⊢ λx:τ. body ⇓ ⟨x, body, ρ⟩` (a closure capturing the env). */
+  protected evalLam(env: ValEnv): Parser<Value> {
+    // Match the Lam node only (do not evaluate the body — it is captured
+    // unevaluated in the closure). The body subtree is left unconsumed in
+    // the stream; it is evaluated on demand when the closure is applied.
+    return parserOf<Value>(
+      new TreeExp(
+        "Lam",
+        [],
+        (node: unknown) =>
+          new Closure(
+            (node as Lam).param,
+            (node as Lam).type,
+            (node as Lam).body,
+            env,
+          ),
+      ),
+    );
   }
-  if (term instanceof BoolLit) return term.value;
-  if (term instanceof IntLit) return term.value;
-  throw new Error(`unknown term`);
+
+  /**
+   * App: `ρ ⊢ e₁ e₂ ⇓ v` where `ρ ⊢ e₁ ⇓ ⟨x,body,ρ'⟩`, `ρ ⊢ e₂ ⇓ v₂`,
+   * and `ρ' ⊢ body[x:=v₂] ⇓ v`.  The body re-evaluation is a **nested
+   * tree-parse** over the closure's body subtree under `ρ'.extend(x, v₂)` —
+   * the higher-order attribute.
+   */
+  protected evalApp(env: ValEnv): Parser<Value> {
+    return parserOf<Value>(
+      new TreeExp(
+        "App",
+        [this.evalExpr(env)._exp, this.evalExpr(env)._exp],
+        (_node: unknown, [fnVal, argVal]: unknown[]) => {
+          if (!(fnVal instanceof Closure)) {
+            throw new Error(`cannot apply non-function`);
+          }
+          const bodyEnv = (fnVal.env as ValEnv).extend(
+            fnVal.param,
+            argVal as Value,
+          );
+          // Higher-order step: re-parse the closure body subtree under bodyEnv.
+          const bodyToks = flattenTree(fnVal.body as Term, termChildren);
+          const results = [
+            ...this._parseTreeWith(bodyToks, this.evalExpr(bodyEnv)),
+          ];
+          if (results.length === 0) throw new Error(`stuck application`);
+          return results[0]!;
+        },
+      ),
+    );
+  }
+
+  /** Let: `ρ ⊢ let x:τ = def in body ⇓ v` where `ρ ⊢ def ⇓ v₁`, `ρ ⊢ body[x:=v₁] ⇓ v`. */
+  protected evalLet(env: ValEnv): Parser<Value> {
+    return parserOf<Value>(
+      new TreeExp(
+        "Let",
+        [this.evalExpr(env)._exp],
+        (node: unknown, [defVal]: unknown[]) => {
+          // def evaluated under ρ; body evaluated under ρ[x:=v₁] via a
+          // nested tree-parse (the higher-order step, as in `app`).
+          const bodyEnv = env.extend((node as Let).name, defVal as Value);
+          const bodyToks = flattenTree((node as Let).body, termChildren);
+          const results = [
+            ...this._parseTreeWith(bodyToks, this.evalExpr(bodyEnv)),
+          ];
+          if (results.length === 0) throw new Error(`stuck let`);
+          return results[0]!;
+        },
+      ),
+    );
+  }
+
+  protected evalBool(_env: ValEnv): Parser<Value> {
+    return parserOf<Value>(
+      new TreeExp("BoolLit", [], (node: unknown) => (node as BoolLit).value),
+    );
+  }
+
+  protected evalInt(_env: ValEnv): Parser<Value> {
+    return parserOf<Value>(
+      new TreeExp("IntLit", [], (node: unknown) => (node as IntLit).value),
+    );
+  }
 }
 
 /* ======================================================================

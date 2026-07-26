@@ -5,7 +5,7 @@
 
 export { Grammar, rule } from "./Grammar.ts";
 export type { Diagnostic, GrammarShape } from "./Grammar.ts";
-export { Parser } from "./Parser.ts";
+export { Parser, parserOf } from "./Parser.ts";
 export type { Span } from "./zipper/zipper.ts";
 
 export {
@@ -61,3 +61,7 @@ export type {
   RequiresPredicate,
   RescueHandler,
 } from "./contracts.ts";
+
+/* ── Tree-consuming grammars (higher-order attribute grammars, Phase 1) ── */
+export { flattenTree, TreeExp } from "./zipper/zipper.ts";
+export type { TreeTok } from "./zipper/zipper.ts";

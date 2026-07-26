@@ -1,6 +1,6 @@
 /**
  * Untyped lambda calculus — AST builder + call-by-value evaluator.
- * Multi-pass: grammar builds AST, then `evalTerm` evaluates it.
+ * The evaluator is a tree-consuming grammar (no separate recursive function).
  */
 
 import { Grammar, rule } from "../src/index.ts";
@@ -8,10 +8,13 @@ import {
   char,
   empty,
   epsilon,
+  flattenTree,
   ident as identLexeme,
   literal,
   or,
+  parserOf,
   seq,
+  TreeExp,
   ws as wsLexeme,
   ws1 as ws1Lexeme,
 } from "../src/index.ts";
@@ -225,45 +228,135 @@ export class LambdaAST extends AbstractLambda<{ expr: UTTerm; atom: UTTerm }> {
   }
 }
 
-/* ─── Evaluator (multi-pass) ─────────────────────────────────────────── */
+/* ─── Evaluator (tree-consuming grammar) ─────────────────────────────── */
 
-/** Call-by-value evaluation judgment `ρ ⊢ e ⇓ v` as a syntax-directed recursive function. */
-export function lambdaEval(term: UTTerm, env: UTValEnv): UTValue {
-  if (term instanceof UTVar) {
-    const v = env.lookup(term.name);
-    if (v === undefined) throw new Error(`unbound variable: ${term.name}`);
-    return v;
+/** Children extractor for {@link UTTerm} trees, used by {@link LambdaEval}. */
+function utTermChildren(node: unknown, tag: string): readonly unknown[] {
+  switch (tag) {
+    case "UTVar":
+      return [];
+    case "UTLam":
+      return [(node as UTLam).body];
+    case "UTApp":
+      return [(node as UTApp).fn, (node as UTApp).arg];
+    case "UTLet":
+      return [(node as UTLet).def, (node as UTLet).body];
+    default:
+      return [];
   }
-  if (term instanceof UTLam) {
-    return new UTClosure(term.param, term.body, env);
-  }
-  if (term instanceof UTApp) {
-    const fn = lambdaEval(term.fn, env);
-    const arg = lambdaEval(term.arg, env);
-    if (!(fn instanceof UTClosure)) {
-      throw new Error(`cannot apply non-function`);
-    }
-    return lambdaEval(fn.body, fn.env.extend(fn.param, arg));
-  }
-  if (term instanceof UTLet) {
-    const defVal = lambdaEval(term.def, env);
-    return lambdaEval(term.body, env.extend(term.name, defVal));
-  }
-  throw new Error(`unknown term`);
 }
 
-/** Multi-pass evaluator: parses to AST via `super`, then evaluates with `lambdaEval`. */
-export class LambdaEval extends LambdaAST {
+/**
+ * Evaluator as a **tree-consuming grammar**.  Instead of extending
+ * `LambdaAST` and bolting on a recursive `lambdaEval`, this is a grammar
+ * whose input is a flattened {@link UTTerm} tree and whose semantic actions
+ * are the evaluation rules `ρ ⊢ e ⇓ v`.  Each production is a {@link TreeExp}
+ * matching a `UTTerm` node by class name; the inherited context `ρ`
+ * (`UTValEnv`) is threaded via the parameterised `@rule` method `evalExpr(env)`.
+ *
+ * The higher-order step — applying a closure to an argument — is a nested
+ * tree-parse: `app` re-parses the closure's body subtree under the extended
+ * environment.  Per-pass memo isolation (Layer 0) makes the nested re-entry
+ * safe.
+ */
+export class LambdaEval extends Grammar<{ expr: UTValue }> {
+  /** Parse source to AST (via `LambdaAST`), then evaluate each AST as a tree. */
   parseWith(input: string, env: UTValEnv): Set<UTValue> {
-    const asts = [...this._parseWith(input, this.start())];
+    const asts = [...new LambdaAST().parse(input)] as UTTerm[];
     const results = new Set<UTValue>();
     for (const ast of asts) {
       try {
-        results.add(lambdaEval(ast, env));
+        const toks = flattenTree(ast, utTermChildren);
+        for (const v of this._parseTreeWith(toks, this.evalExpr(env))) {
+          results.add(v);
+        }
       } catch {
         // stuck term — skip
       }
     }
     return results;
+  }
+
+  override start(): Parser<UTValue> {
+    return this.evalExpr(UTValEnv.empty());
+  }
+
+  /** `ρ ⊢ e ⇓ v` — the evaluation judgment, parameterised by the value env. */
+  @rule
+  evalExpr(env: UTValEnv): Parser<UTValue> {
+    return or(
+      this.evalVar(env),
+      this.evalLam(env),
+      this.evalApp(env),
+      this.evalLet(env),
+    );
+  }
+
+  /** Var: `ρ ⊢ x ⇓ ρ(x)`. */
+  protected evalVar(env: UTValEnv): Parser<UTValue> {
+    return parserOf<UTValue>(
+      new TreeExp("UTVar", [], (node: unknown) => {
+        const v = env.lookup((node as UTVar).name);
+        if (v === undefined) throw new Error(`unbound variable`);
+        return v;
+      }),
+    );
+  }
+
+  /** Lam: `ρ ⊢ λx. body ⇓ ⟨x, body, ρ⟩` (capture the body unevaluated). */
+  protected evalLam(env: UTValEnv): Parser<UTValue> {
+    return parserOf<UTValue>(
+      new TreeExp(
+        "UTLam",
+        [],
+        (node: unknown) =>
+          new UTClosure((node as UTLam).param, (node as UTLam).body, env),
+      ),
+    );
+  }
+
+  /**
+   * App: `ρ ⊢ e₁ e₂ ⇓ v` where `ρ ⊢ e₁ ⇓ ⟨x,body,ρ'⟩`, `ρ ⊢ e₂ ⇓ v₂`,
+   * and `ρ' ⊢ body[x:=v₂] ⇓ v`.  The body re-evaluation is a nested
+   * tree-parse over the closure's body subtree — the higher-order attribute.
+   */
+  protected evalApp(env: UTValEnv): Parser<UTValue> {
+    return parserOf<UTValue>(
+      new TreeExp(
+        "UTApp",
+        [this.evalExpr(env)._exp, this.evalExpr(env)._exp],
+        (_node: unknown, [fnVal, argVal]: unknown[]) => {
+          if (!(fnVal instanceof UTClosure)) {
+            throw new Error(`cannot apply non-function`);
+          }
+          const bodyEnv = fnVal.env.extend(fnVal.param, argVal as UTValue);
+          const bodyToks = flattenTree(fnVal.body, utTermChildren);
+          const results = [
+            ...this._parseTreeWith(bodyToks, this.evalExpr(bodyEnv)),
+          ];
+          if (results.length === 0) throw new Error(`stuck application`);
+          return results[0]!;
+        },
+      ),
+    );
+  }
+
+  /** Let: `ρ ⊢ let x = def in body ⇓ v` where `ρ ⊢ def ⇓ v₁`, `ρ ⊢ body[x:=v₁] ⇓ v`. */
+  protected evalLet(env: UTValEnv): Parser<UTValue> {
+    return parserOf<UTValue>(
+      new TreeExp(
+        "UTLet",
+        [this.evalExpr(env)._exp],
+        (node: unknown, [defVal]: unknown[]) => {
+          const bodyEnv = env.extend((node as UTLet).name, defVal as UTValue);
+          const bodyToks = flattenTree((node as UTLet).body, utTermChildren);
+          const results = [
+            ...this._parseTreeWith(bodyToks, this.evalExpr(bodyEnv)),
+          ];
+          if (results.length === 0) throw new Error(`stuck let`);
+          return results[0]!;
+        },
+      ),
+    );
   }
 }

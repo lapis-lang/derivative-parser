@@ -191,13 +191,71 @@ reaches that point in the left-to-right traversal.
 | Example | Pattern | Demonstrates |
 | ------- | ------- | ------------- |
 | `arith-var.ts` | Pattern 2 (read-only env) | Inherited attributes, variable lookup |
-| `stlc.ts` | Both | One-pass type checking (Pattern 2), multi-pass evaluation (Pattern 1), proof-bearing type checking |
+| `stlc.ts` | Both | One-pass type checking (Pattern 2), tree-consuming evaluation (Pattern 3), proof-bearing type checking |
 | `proplogic.ts` | Both | Truth evaluation (Pattern 2), natural-deduction proofs (Pattern 1) |
-| `lambda-eval.ts` | Pattern 1 | Untyped evaluation via multi-pass |
+| `lambda-eval.ts` | Pattern 3 | Untyped evaluation via a tree-consuming grammar |
 
 See [examples/stlc.ts](examples/stlc.ts) for the headline example: Simply
 Typed Lambda Calculus with four interpretations (AST, type checker,
 evaluator, proof-bearing type checker) over one abstract grammar.
+
+## Tree-consuming grammars (higher-order attributes)
+
+The semantics patterns above cover static semantics (types, proofs) but stop
+short of *dynamic* semantics — runtime value evaluation — when the language
+has higher-order features (closures). Applying a closure `λx. body` to an
+argument `v` produces a **new tree fragment** (the body with `x` bound to
+`v`) that must itself be evaluated; the evaluation tree grows at runtime.
+
+A **tree-consuming grammar** is a grammar whose input is an already-built
+tree (an AST or derivation tree) rather than source text. Combined with
+overridden semantic actions, this lets a second pass — such as evaluation —
+be expressed as a grammar subclass instead of a separate recursive function.
+
+```ts
+import { Grammar, rule, flattenTree, parserOf, TreeExp, or } from '@lapis-lang/zipper-grammar';
+
+// A tree-consuming evaluator: input is a Term tree, output is a Value.
+class STLCEval extends Grammar<{ expr: Value }> {
+    parseWith(input: string, env: ValEnv): Set<Value> {
+        const asts = [...new STLCAST().parse(input)] as Term[];
+        const results = new Set<Value>();
+        for (const ast of asts) {
+            const toks = flattenTree(ast, termChildren);
+            for (const v of this._parseTreeWith(toks, this.evalExpr(env)))
+                results.add(v);
+        }
+        return results;
+    }
+
+    @rule evalExpr(env: ValEnv): Parser<Value> {
+        return or(this.evalVar(env), this.evalLam(env), this.evalApp(env), /* ... */);
+    }
+
+    // The higher-order step: app re-parses the closure body under an
+    // extended env — a nested tree-parse over the body subtree.
+    protected evalApp(env: ValEnv): Parser<Value> {
+        return parserOf(new TreeExp('App',
+            [this.evalExpr(env)._exp, this.evalExpr(env)._exp],
+            (_node, [fn, arg]) => {
+                if (!(fn instanceof Closure)) throw new Error('cannot apply');
+                const bodyEnv = fn.env.extend(fn.param, arg);
+                const bodyToks = flattenTree(fn.body, termChildren);
+                return [...this._parseTreeWith(bodyToks, this.evalExpr(bodyEnv))][0]!;
+            }));
+    }
+}
+```
+
+The closure body re-parse is a **higher-order attribute**: a semantic action
+that produces a new tree fragment which the engine evaluates on demand. The
+zipper engine's per-position memoisation provides sharing, and per-pass memo
+isolation (stale-position detection in `goDown`) makes the nested re-entry
+safe — the same grammar instance may be reused across passes without leaking
+state.
+
+See [examples/stlc.ts](examples/stlc.ts) and
+[examples/lambda-eval.ts](examples/lambda-eval.ts) for the full evaluators.
 
 ## Grammar-native contracts
 
@@ -433,6 +491,9 @@ Import from `@lapis-lang/zipper-grammar` and use without `this.`:
 | `between(open, p, close)` | Wrap `p` between delimiters, returning `p`'s result. |
 | `trim(p, ws)`         | Wrap `p` with `ws` on both sides.          |
 | `keyword(word, reserved?)` | Literal with reserved-word guard.     |
+| `flattenTree(root, childrenOf)` | Flatten a tree into a preorder `TreeTok[]` stream for tree-consuming grammars. |
+| `TreeExp(tag, children, fn?)` | Match a tree node by class name; dispatch to child sub-parsers by position. |
+| `parserOf(exp)`       | Wrap a raw `Exp` (e.g. `TreeExp`) as a `Parser<T>`. |
 
 ### `Grammar<S>` — abstract base
 
@@ -444,6 +505,7 @@ Subclass and define productions as `@rule` getters (or methods) returning
 | `ws` (overridable getter)           | Whitespace production used by `sseq`. Default: zero or more spaces/tabs/newlines/CR. |
 | `sseq(...parsers)`                  | Sigspace sequence — like `seq` but auto-inserts `this.ws` between terms. |
 | `parse(input)` / `recognize(input)` | Drivers — full forest / boolean.           |
+| `parseTree(treeTokens)`             | Parse a flattened tree-token stream (tree-consuming grammar). |
 
 The `@rule` decorator can wrap either a **getter** or a **method**:
 - `@rule get foo()` — memoised per instance; the canonical form for
