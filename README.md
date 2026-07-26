@@ -140,6 +140,11 @@ This connection is well-known in the attribute-grammar tradition:
 | Two-phase evaluation            | `super.expr.map(evalFn)` (multi-pass)     |
 | L-attributed one-pass            | `chain(first, fn)` — monadic bind          |
 
+An inference rule has **premises** (above the line) and a **conclusion**
+(below the line). This library lets you encode both directly: the premises
+as `@requires` on the semantic action, the conclusion as `@ensures`, and
+the rule's body as the method itself — see [Grammar-native contracts](#grammar-native-contracts) below.
+
 ### Two patterns for semantics
 
 **Pattern 1 — multi-pass via `super`**: a subclass calls
@@ -194,6 +199,184 @@ See [examples/stlc.ts](examples/stlc.ts) for the headline example: Simply
 Typed Lambda Calculus with four interpretations (AST, type checker,
 evaluator, proof-bearing type checker) over one abstract grammar.
 
+## Grammar-native contracts
+
+A typing rule like
+
+```
+Γ ⊢ fn : τ₁ → τ₂    Γ ⊢ arg : τ₁
+────────────────────────────────  (App)
+        Γ ⊢ fn arg : τ₂
+```
+
+has two parts: the **premises** above the line (`fn` is a function type;
+its domain matches `arg`'s type) and the **conclusion** below (the result
+is the codomain). Traditionally you'd hand-code this as an `if` guard
+inside the semantic action, returning a sentinel on failure:
+
+```ts
+// Traditional: the inference rule buried in an if-statement
+protected app(fn: Type, arg: Type): Type {
+    if (!(fn instanceof TFun) || !typeEq(fn.dom, arg)) {
+        return undefined as unknown as Type;  // premise failed — reject
+    }
+    return (fn as TFun).cod;                   // conclusion
+}
+```
+
+This library ships a small **Design by Contract** system — `@requires`,
+`@ensures`, `@invariant`, plus `assert`, `implies`, `iff` — that lets you
+declare the premises and conclusion *as* the rule, rather than burying them
+in imperative guards. The key adaptation for the parsing domain: **`@requires`
+fails gracefully** (the branch produces an empty parse forest) rather than
+throwing, because a failed premise means the inference rule doesn't apply —
+the term is ill-typed, not a crashed program.
+
+```ts
+// With contracts: the rule is declared, not buried
+@requires((_self, fn: Type, arg: Type) =>
+    fn instanceof TFun && typeEq(fn.dom, arg))   // premises
+@ensures((_self, _args, _old, result: Type) =>
+    result instanceof TVar || result instanceof TFun)  // conclusion
+protected app(fn: Type, _arg: Type): Type {
+    return (fn as TFun).cod;                     // the rule's body
+}
+
+new STLCTypeCheck().parseWith('\\x:Int. x x', TypeEnv.empty());  // Set {} — ill-typed, no throw
+```
+
+### `assert` / `implies` / `iff` — inline logical primitives
+
+Zero integration cost. `assert` throws on failure (it catches *bugs*, not
+parse failures) and narrows types in TypeScript — useful for the
+`unknown`-typed `ctx` in parameterised productions:
+
+```ts
+import { assert, implies, iff } from '@lapis-lang/zipper-grammar';
+
+@rule
+protected lambdaProd(ctx: unknown): Parser<S['expr']> {
+    return this.seq(/* ... */).chain(([, param, , , , ty, , ,]) => {
+        assert(typeof param === 'string', 'param must be a string');
+        assert(ty instanceof TVar || ty instanceof TFun, 'ty must be a Type');
+        return this.exprProd(this.extendCtx(ctx, param, ty))
+            .map((body) => this.lam(param, ty, body));
+    });
+}
+
+// Material implication and biconditional for composing predicates:
+implies(fn instanceof TFun, typeEq(fn.dom, arg));   // !p || q
+iff(result instanceof TVar, /* condition */);       // (p && q) || (!p && !q)
+```
+
+### `@requires` — inference-rule premises
+
+Declares the premises above the line. On failure, the method returns
+`undefined` — the calling `chain`/`.map` callback then produces `empty()`,
+so the branch is rejected without raising an exception. This replaces the
+manual `if`-guard-and-return-sentinel pattern with a declarative premise:
+
+```ts
+import { requires } from '@lapis-lang/zipper-grammar';
+
+// The Var rule's premise: x must be bound in Γ
+@requires((_self, name: string, ctx: unknown) =>
+    ctx instanceof TypeEnv && ctx.lookup(name) !== undefined)
+protected varRef(name: string, ctx: unknown): Type {
+    return (ctx as TypeEnv).lookup(name) as Type;
+}
+```
+
+### `@ensures` — inference-rule conclusions
+
+Declares the conclusion below the line — a postcondition on the method's
+result. The predicate receives `(self, args, old, result)` where `old` is
+a snapshot of `self` taken before the body ran. A violated postcondition
+is a *bug* (e.g. a missing `return`), so it throws `ContractError`:
+
+```ts
+import { ensures } from '@lapis-lang/zipper-grammar';
+
+// The App rule's conclusion: the result is a valid Type
+@ensures((_self, _args, _old, result: Type) =>
+    result instanceof TVar || result instanceof TFun)
+protected app(fn: Type, arg: Type): Type {
+    return (fn as TFun).cod;
+}
+```
+
+### `@invariant` — grammar well-formedness
+
+A class decorator declaring an invariant that must hold after construction
+and after every contracted semantic-action call. Catches grammar
+construction bugs (e.g. a production that accidentally returns `undefined`):
+
+```ts
+import { invariant } from '@lapis-lang/zipper-grammar';
+
+@invariant((self: AbstractSTLC<any>) => self.start() !== undefined)
+abstract class AbstractSTLC<S extends STLCShape> extends Grammar<S> { /* ... */ }
+```
+
+### `@rescue` — parse-failure recovery
+
+Declares a handler invoked when a production's parse yields an empty forest.
+The handler receives a `ParseFailure` (with `reason`, `message`, `position`,
+`production`) and may report a diagnostic, return an alternative parser, or
+call `retry` to re-run the production once. Inherited unless overridden
+(most-derived wins):
+
+```ts
+import { rescue } from '@lapis-lang/zipper-grammar';
+
+@rescue((self, failure, _args, retry) => {
+    self.diagnostic(`type error: ${failure.message}`, failure.reason);
+    return self.empty();
+})
+@rule
+protected override appProd(ctx: unknown): Parser<Type> { /* ... */ }
+```
+
+### `diagnostic()` — reporting failure reasons
+
+A `Grammar` helper that produces an epsilon parser carrying a `Diagnostic`
+value (`{ reason, message }`) through the parse forest, so callers can
+report *why* a branch failed without raising an exception:
+
+```ts
+return this.diagnostic('ill-typed application: Int is not a function', 'type-mismatch');
+```
+
+### Subcontracting (Liskov)
+
+Contracts compose across inheritance exactly as Liskov substitution
+requires — automatically, because the Proxy walks the prototype chain:
+
+| Decorator   | Composition | Meaning                              |
+| ----------- | ----------- | ------------------------------------ |
+| `@invariant`| AND-ed      | Subclass invariant strengthens       |
+| `@requires` | OR-ed       | Subclass accepts a *superset* of inputs (weakens) |
+| `@ensures`  | AND-ed      | Subclass guarantees a *more specific* result (strengthens) |
+
+A subclass that overrides `app` without re-declaring `@ensures` is still
+checked against the parent's postcondition. The subclass
+refines the production's meaning, and the contract system enforces that the
+refinement is a valid strengthening.
+
+### Checked mode
+
+Contract checking is enabled by default. The global default applies live
+to every `Grammar` instance — toggling it affects existing instances
+immediately. (The internal `withoutChecks` recursion guard is scoped
+per-instance so concurrent operations on different instances don't
+interfere.) Disable for zero production overhead:
+
+```ts
+import { setCheckedMode } from '@lapis-lang/zipper-grammar';
+
+setCheckedMode(false);  // all instances skip checks — zero overhead
+```
+
 ## Source positions
 
 Every `.map()` callback receives a `Span` as its second argument describing
@@ -219,7 +402,13 @@ ignored.
 ## API
 
 ```ts
-import { Grammar, Parser } from '@lapis-lang/zipper-grammar';
+import {
+    Grammar, Parser,
+    assert, implies, iff,
+    requires, ensures, invariant,
+    setCheckedMode, getCheckedMode,
+    ContractError, AssertionError,
+} from '@lapis-lang/zipper-grammar';
 import type { Span } from '@lapis-lang/zipper-grammar';
 ```
 
@@ -234,6 +423,7 @@ Subclass and define productions as `@rule` getters (or methods) returning
 | `pred(p, label?)`                   | Match a character predicate.               |
 | `literal(s)`                        | Match a multi-character literal.           |
 | `epsilon(value)`                    | ε — always succeeds, yielding `value`.     |
+| `diagnostic(msg, reason?)`          | ε carrying a `Diagnostic` (`{ reason, message }`) — for `@rescue` handlers. |
 | `empty()`                           | ∅ — the failing parser.                    |
 | `or(...parsers)`                    | Variadic alternation.                      |
 | `seq(...parsers)`                   | Variadic concatenation; returns tuple.     |
@@ -258,6 +448,21 @@ The `@rule` decorator can wrap either a **getter** or a **method**:
 | `chain(fn)` | Monadic bind. `fn` receives the parsed value `T` and returns a `Parser<U>`; result is `Parser<[T, U]>`. Enables L-attributed one-pass parsing. |
 | `many()`    | A\* — parse trees are arrays `T[]`.             |
 | `opt()`     | A ∪ ε — parse trees are `T \| undefined`.       |
+
+### Contracts
+
+| Export          | Kind      | Effect                                                          |
+| --------------- | --------- | --------------------------------------------------------------- |
+| `assert(c, m?)` | function  | Inline assertion; throws `AssertionError` on failure; narrows `c`'s type. |
+| `implies(p, q)` | function  | Material implication `!p \|\| q`.                              |
+| `iff(p, q)`     | function  | Biconditional `(p && q) \|\| (!p && !q)`.                       |
+| `@requires`     | decorator | Precondition; on failure returns `undefined` (graceful → `empty()`). OR-ed across inheritance. |
+| `@ensures`      | decorator | Postcondition `(self, args, old, result) => boolean`; throws `ContractError` on failure. AND-ed across inheritance. |
+| `@invariant`    | decorator | Class invariant; checked after construction and after each contracted call. AND-ed across inheritance. |
+| `@rescue`       | decorator | Parse-failure recovery; handler `(self, failure, args, retry?) => unknown` invoked when a production yields an empty forest. Inherited (most-derived wins). |
+| `setCheckedMode(b)` / `getCheckedMode()` | function | Toggle the global default for contract enforcement. Applies live to all instances (existing and new). When off, no Proxy is created for new instances and existing Proxies skip checks (zero overhead). |
+| `ContractError` / `AssertionError` | class | Error types thrown by `@ensures`/`@invariant` and `assert` respectively. |
+| `ParseFailure` / `Diagnostic` | type | `{ reason, message?, ... }` — failure description passed to `@rescue` / carried by `diagnostic()`. |
 
 ## How it works
 
@@ -420,8 +625,9 @@ deno task bench
 ```
 src/
   index.ts            — public entry point
-  Grammar.ts          — OO grammar base + @rule decorator + drivers
+  Grammar.ts          — OO grammar base + @rule decorator + drivers + contract Proxy
   Parser.ts           — thin Parser<T> wrapper (fluent API)
+  contracts.ts        — grammar-native contracts: assert/implies/iff + @requires/@ensures/@invariant + Proxy dispatch
   util/
     tree_key.ts       — content-based keying for parse-tree values
   zipper/
@@ -446,6 +652,7 @@ test/
   recognition.test.ts          — left-recursive / ambiguous grammars
   grammar-composition.test.ts  — shape-typed grammars + Bracha override
   semantics.test.ts            — semantic examples (type checking, evaluation, proofs)
+  contracts.test.ts            — grammar-native contracts (@requires/@ensures/@invariant, subcontracting, checked mode)
 ```
 
 ## Scripts
@@ -465,6 +672,9 @@ test/
   [*"Executable Grammars in Newspeak"*](https://bracha.org/executableGrammars.pdf), ENTCS 2007.
 - Matthew Might, David Darais & Daniel Spiewak,
   [*"Parsing with Derivatives — A Functional Pearl"*](https://matt.might.net/papers/might2011derivatives.pdf), ICFP 2011.
+- [decorator-contracts](https://github.com/final-hill/decorator-contracts) — the inspiration for the grammar-native contracts system.
+- [Design by Contract](https://en.wikipedia.org/wiki/Design_by_contract),
+  [Liskov Substitution Principle](https://en.wikipedia.org/wiki/Liskov_substitution_principle).
 
 ## License
 
