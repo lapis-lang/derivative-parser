@@ -1,5 +1,5 @@
 {
-  "name": "lapis-lang",
+  "name": "zipper-grammar",
   "build": {
     "dockerfile": "Dockerfile"
   },
