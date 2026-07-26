@@ -4,10 +4,11 @@
  * Shows all four interpretations of the same abstract grammar:
  *  • STLCAST       — syntax builder
  *  • STLCTypeCheck — one-pass type checker (judgment `Γ ⊢ e : τ`)
- *  • STLCEval      — tree-consuming evaluator (judgment `ρ ⊢ e ⇓ v`)
- *    The evaluator is a grammar subclass over the AST tree; closure
- *    application re-parses the body under an extended env (higher-order
- *    attribute). No separate recursive `evalTerm` function.
+ *  • STLCEval      — one-pass evaluator (judgment `ρ ⊢ e ⇓ v`)
+ *    The evaluator is a grammar subclass extending `AbstractSTLC`, the same
+ *    shape as the type checker. Closure application re-parses the body's
+ *    source substring under an extended env (higher-order attribute). No
+ *    intermediate AST, no separate recursive function.
  *  • STLCTyped     — proof-bearing type checker (derivation trees)
  */
 

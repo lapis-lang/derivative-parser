@@ -1,8 +1,8 @@
 /**
  * Tests for tree-consuming grammars: {@link TreeExp}, {@link flattenTree},
- * and {@link ZipperDriver.parseTree}. Also covers per-pass memo isolation
- * (Layer 0): running the engine twice over the same grammar must not leak
- * stale memo state from the first pass.
+ * and {@link ZipperDriver.parseTree}. Also covers per-pass memo isolation:
+ * running the engine twice over the same grammar must not leak stale memo
+ * state from the first pass.
  */
 
 import { assertEquals, assertNotEquals } from "@std/assert";
@@ -142,10 +142,10 @@ Deno.test("TreeExp — mismatched tag yields empty parse forest", () => {
   assertEquals(results.length, 0);
 });
 
-Deno.test("Layer 0 — per-pass memo isolation: two parses over same grammar", () => {
+Deno.test("Per-pass memo isolation: two parses over same grammar", () => {
   // The critical regression test: running the engine twice over the same
-  // grammar instance must not leak stale Mem state from pass 1 into pass 2.
-  // Without Layer 0, the second parse would re-flow pass 1's values.
+  // grammar instance must not leak stale Mem state from the first pass.
+  // Without memo isolation, the second parse would re-flow pass 1's values.
   const g = new TreeEval();
   const tree1 = new Add(new Num(10), new Num(20));
   const tree2 = new Mul(new Num(6), new Num(7));
@@ -160,7 +160,7 @@ Deno.test("Layer 0 — per-pass memo isolation: two parses over same grammar", (
   assertNotEquals(v2, 30);
 });
 
-Deno.test("Layer 0 — repeated identical parse still correct (memo reuse within a pass)", () => {
+Deno.test("Per-pass memo isolation: repeated identical parse still correct", () => {
   // Within a single pass, memoisation should still work (the stale-Pos
   // check must not break same-pass memo reuse). Parse the same tree twice
   // in succession and confirm both give the right answer.

@@ -191,15 +191,15 @@ reaches that point in the left-to-right traversal.
 | Example | Pattern | Demonstrates |
 | ------- | ------- | ------------- |
 | `arith-var.ts` | Pattern 2 (read-only env) | Inherited attributes, variable lookup |
-| `stlc.ts` | Both | One-pass type checking (Pattern 2), tree-consuming evaluation (Pattern 3), proof-bearing type checking |
+| `stlc.ts` | Both | One-pass type checking (Pattern 2), one-pass evaluation (higher-order attributes), proof-bearing type checking |
 | `proplogic.ts` | Both | Truth evaluation (Pattern 2), natural-deduction proofs (Pattern 1) |
-| `lambda-eval.ts` | Pattern 3 | Untyped evaluation via a tree-consuming grammar |
+| `lambda-eval.ts` | Higher-order attributes | Untyped evaluation as a one-pass grammar subclass |
 
 See [examples/stlc.ts](examples/stlc.ts) for the headline example: Simply
 Typed Lambda Calculus with four interpretations (AST, type checker,
 evaluator, proof-bearing type checker) over one abstract grammar.
 
-## Tree-consuming grammars (higher-order attributes)
+## Higher-order attributes (one-pass evaluation)
 
 The semantics patterns above cover static semantics (types, proofs) but stop
 short of *dynamic* semantics — runtime value evaluation — when the language
@@ -207,55 +207,64 @@ has higher-order features (closures). Applying a closure `λx. body` to an
 argument `v` produces a **new tree fragment** (the body with `x` bound to
 `v`) that must itself be evaluated; the evaluation tree grows at runtime.
 
-A **tree-consuming grammar** is a grammar whose input is an already-built
-tree (an AST or derivation tree) rather than source text. Combined with
-overridden semantic actions, this lets a second pass — such as evaluation —
-be expressed as a grammar subclass instead of a separate recursive function.
+A **higher-order attribute** is a semantic action that re-enters the engine
+over a fragment of the input under a different inherited context. For
+evaluation, `app` captures the closure body's **input span** and re-parses
+that substring under the extended environment via `_forward`. This lets the
+evaluator be a single grammar class extending the abstract grammar — the
+same shape as a type checker — with no intermediate AST and no separate
+recursive function.
 
 ```ts
-import { Grammar, rule, flattenTree, parserOf, TreeExp, or } from '@lapis-lang/zipper-grammar';
-
-// A tree-consuming evaluator: input is a Term tree, output is a Value.
-class STLCEval extends Grammar<{ expr: Value }> {
+class STLCEval extends AbstractSTLC<{ expr: Value; atom: Value; type: Type }> {
     parseWith(input: string, env: ValEnv): Set<Value> {
-        const asts = [...new STLCAST().parse(input)] as Term[];
-        const results = new Set<Value>();
-        for (const ast of asts) {
-            const toks = flattenTree(ast, termChildren);
-            for (const v of this._parseTreeWith(toks, this.evalExpr(env)))
-                results.add(v);
-        }
-        return results;
+        this._input = input;
+        return this._parseWith(input, this.exprProd(env));
     }
 
-    @rule evalExpr(env: ValEnv): Parser<Value> {
-        return or(this.evalVar(env), this.evalLam(env), this.evalApp(env), /* ... */);
-    }
-
-    // The higher-order step: app re-parses the closure body under an
-    // extended env — a nested tree-parse over the body subtree.
-    protected evalApp(env: ValEnv): Parser<Value> {
-        return parserOf(new TreeExp('App',
-            [this.evalExpr(env)._exp, this.evalExpr(env)._exp],
-            (_node, [fn, arg]) => {
-                if (!(fn instanceof Closure)) throw new Error('cannot apply');
-                const bodyEnv = fn.env.extend(fn.param, arg);
-                const bodyToks = flattenTree(fn.body, termChildren);
-                return [...this._parseTreeWith(bodyToks, this.evalExpr(bodyEnv))][0]!;
-            }));
+    // The higher-order step: app re-parses the closure body's source
+    // substring under an extended env via _forward.
+    protected app(fn: Value, arg: Value): Value {
+        if (!(fn instanceof Closure)) throw new Error('cannot apply');
+        const bodyEnv = fn.env.extend(fn.param, arg);
+        return [...this._forward(this._input, fn.bodySpan, this.exprProd(bodyEnv))][0]!;
     }
 }
 ```
 
-The closure body re-parse is a **higher-order attribute**: a semantic action
-that produces a new tree fragment which the engine evaluates on demand. The
-zipper engine's per-position memoisation provides sharing, and per-pass memo
-isolation (stale-position detection in `goDown`) makes the nested re-entry
-safe — the same grammar instance may be reused across passes without leaking
-state.
+The `_forward` method spins up a fresh `ZipperDriver` over the substring; per-pass memo isolation (stale-position detection in `goDown`) makes the nested re-entry safe — the same grammar instance may be reused without leaking state.
 
 See [examples/stlc.ts](examples/stlc.ts) and
 [examples/lambda-eval.ts](examples/lambda-eval.ts) for the full evaluators.
+
+## Tree-consuming grammars
+
+For passes whose input is an already-built tree (an AST or derivation tree)
+rather than source text, the engine also supports **tree-consuming grammars**
+via `TreeExp` and `flattenTree`. This is useful when a pass consumes a tree
+produced by a prior pass (e.g. desugaring, or consuming a derivation tree).
+A `TreeExp` matches a tree node by class name and dispatches to child
+sub-parsers by position, completing at the post-subtree offset — mirroring
+how `TokExp` completes at the next character position.
+
+```ts
+import { Grammar, rule, flattenTree, parserOf, TreeExp, or } from '@lapis-lang/zipper-grammar';
+
+class TreeEval extends Grammar<{ expr: number }> {
+    override start() { return this.expr; }
+    @rule get expr(): Parser<number> {
+        return or(this.numNode, this.addNode);
+    }
+    protected get addNode(): Parser<number> {
+        return parserOf(new TreeExp('Add',
+            [this.expr._exp, this.expr._exp],
+            (_n, [l, r]) => (l as number) + (r as number)));
+    }
+}
+
+const toks = flattenTree(tree, childrenOf);
+const [v] = [...new TreeEval().parseTree(toks)]; // 7
+```
 
 ## Grammar-native contracts
 
@@ -506,6 +515,7 @@ Subclass and define productions as `@rule` getters (or methods) returning
 | `sseq(...parsers)`                  | Sigspace sequence — like `seq` but auto-inserts `this.ws` between terms. |
 | `parse(input)` / `recognize(input)` | Drivers — full forest / boolean.           |
 | `parseTree(treeTokens)`             | Parse a flattened tree-token stream (tree-consuming grammar). |
+| `_forward(input, span, start)`       | Re-parse a substring under `start` — higher-order attribute combinator (protected). |
 
 The `@rule` decorator can wrap either a **getter** or a **method**:
 - `@rule get foo()` — memoised per instance; the canonical form for

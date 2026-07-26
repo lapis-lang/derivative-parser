@@ -62,6 +62,6 @@ export type {
   RescueHandler,
 } from "./contracts.ts";
 
-/* ── Tree-consuming grammars (higher-order attribute grammars, Phase 1) ── */
+/* ── Tree-consuming grammars (higher-order attribute grammars) ── */
 export { flattenTree, TreeExp } from "./zipper/zipper.ts";
 export type { TreeTok } from "./zipper/zipper.ts";

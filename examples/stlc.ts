@@ -10,17 +10,14 @@ import {
   digits as digitsLexeme,
   empty,
   epsilon,
-  flattenTree,
   ident as identLexeme,
   literal,
   or,
-  parserOf,
   seq,
-  TreeExp,
   ws as wsLexeme,
   ws1 as ws1Lexeme,
 } from "../src/index.ts";
-import type { Parser } from "../src/index.ts";
+import type { Parser, Span } from "../src/index.ts";
 import { assert, ensures, invariant, requires } from "../src/index.ts";
 
 /* ======================================================================
@@ -210,12 +207,27 @@ export class TypedInt extends TypedTerm {
 
 export type Value = Closure | boolean | number;
 
+/**
+ * Sentinel placeholder value used when parsing a lambda body for span
+ * capture. The body is parsed under an env where the parameter is bound to
+ * this sentinel, so `varRef` succeeds (the value is never used — only the
+ * span is kept). Must be non-null because `ValEnv.lookup` maps `null` to
+ * `undefined` (unbound) via `??`.
+ */
+const PLACEHOLDER: Value = 0 as unknown as Value;
+
+/**
+ * A closure capturing the body's **input span** (not a pre-evaluated body
+ * value). The body is re-evaluated on demand by re-parsing its source
+ * substring under the extended environment — the higher-order attribute
+ * mechanism for one-pass evaluation.
+ */
 export class Closure {
   constructor(
     readonly param: string,
     readonly type: Type,
-    readonly body: unknown, // The body parser's result type varies per interpretation
-    readonly env: unknown, // The env type varies per interpretation
+    readonly bodySpan: Span,
+    readonly env: ValEnv,
   ) {}
 }
 
@@ -614,174 +626,193 @@ export class STLCTypeCheck
 }
 
 /* ======================================================================
- *  Concrete: evaluator  — `expr(ρ): Parser<Value>`  (tree-consuming grammar)
+ *  Concrete: evaluator  — `expr(ρ): Parser<Value>`  (one-pass grammar)
  * ====================================================================== */
 
 /**
- * Children extractor for {@link Term} trees, used by {@link STLCEval}.
- * Returns a node's children in source order so {@link flattenTree} produces a
- * preorder stream that the tree-grammar matches positionally.
- */
-function termChildren(node: unknown, tag: string): readonly unknown[] {
-  switch (tag) {
-    case "Var":
-    case "BoolLit":
-    case "IntLit":
-      return [];
-    case "Lam":
-      return [(node as Lam).body];
-    case "App":
-      return [(node as App).fn, (node as App).arg];
-    case "Let":
-      return [(node as Let).def, (node as Let).body];
-    default:
-      return [];
-  }
-}
-
-/**
- * Evaluator as a **tree-consuming grammar**.  Instead of extending `STLCAST`
- * and bolting on a recursive `evalTerm`, this is a grammar whose input is a
- * flattened {@link Term} tree and whose semantic actions are the evaluation
- * rules `ρ ⊢ e ⇓ v`.  Each production is a {@link TreeExp} matching a `Term`
- * node by class name; the inherited context `ρ` (`ValEnv`) is threaded via
- * the parameterised `@rule` method `evalExpr(env)`.
+ * One-pass evaluator — the same shape as `STLCTypeCheck`. Extends
+ * `AbstractSTLC` directly; no intermediate AST, no separate recursive
+ * function. The evaluation judgment `ρ ⊢ e ⇓ v` is a parameterised
+ * production, with `ρ` (`ValEnv`) threaded as inherited context via `chain`.
  *
- * The higher-order step — applying a closure to an argument — is a nested
- * tree-parse: `app` re-parses the closure's body subtree under the extended
- * environment.  This is a higher-order attribute: a semantic action that
- * produces a new tree fragment (the body, re-decorated under `ρ[x:=v]`)
- * which the engine evaluates on demand.  Per-pass memo isolation (Layer 0)
- * makes the nested re-entry safe.
+ * The higher-order step — applying a closure to an argument — is realised
+ * by capturing the body's **input span** in the closure and re-parsing that
+ * substring under the extended environment via `_forward`. This is a
+ * higher-order attribute: a semantic action that re-enters the engine over a
+ * fragment of the original input. Per-pass memo isolation makes the
+ * nested re-entry safe.
  */
-export class STLCEval extends Grammar<{ expr: Value }> {
-  /** Parse source to AST (via `STLCAST`), then evaluate each AST as a tree. */
+export class STLCEval
+  extends AbstractSTLC<{ expr: Value; atom: Value; type: Type }> {
+  /** The source text, stored so semantic actions can re-parse substrings. */
+  private _input: string = "";
+  /**
+   * Base offset of the current parse relative to `_input`. The outer parse
+   * starts at 0; a nested `_forward` re-parse of a substring starting at
+   * offset `S` sets this to `S`, so spans captured inside the re-parse are
+   * absolute (relative to the original `_input`), not relative to the
+   * substring. This lets closures captured during a re-parse be applied
+   * later against the original input.
+   */
+  private _inputOffset: number = 0;
+
   parseWith(input: string, env: ValEnv): Set<Value> {
-    const asts = [...new STLCAST().parse(input)] as Term[];
-    const results = new Set<Value>();
-    for (const ast of asts) {
-      try {
-        const toks = flattenTree(ast, termChildren);
-        for (const v of this._parseTreeWith(toks, this.evalExpr(env))) {
-          results.add(v);
-        }
-      } catch {
-        // stuck term — skip
-      }
-    }
-    return results;
+    this._input = input;
+    this._inputOffset = 0;
+    return this._parseWith(input, this.exprProd(env));
   }
 
   override start(): Parser<Value> {
-    return this.evalExpr(ValEnv.empty());
+    return this.exprProd(ValEnv.empty());
   }
 
-  /** `ρ ⊢ e ⇓ v` — the evaluation judgment, parameterised by the value env. */
-  @rule
-  evalExpr(env: ValEnv): Parser<Value> {
-    return or(
-      this.evalVar(env),
-      this.evalLam(env),
-      this.evalApp(env),
-      this.evalLet(env),
-      this.evalBool(env),
-      this.evalInt(env),
-    );
+  protected override extendCtx(
+    ctx: unknown,
+    name: string,
+    _type: Type,
+  ): unknown {
+    // For evaluation, ctx is ValEnv. Bind the name to a placeholder so the
+    // body parses (the placeholder value is never used — only the span is
+    // captured). The real binding happens when the closure is applied.
+    // Use a unique sentinel object — `ValEnv.lookup` returns `undefined`
+    // for `null` values (`value ?? undefined`), so `null` would be treated
+    // as unbound. A non-null sentinel avoids that.
+    return (ctx as ValEnv).extend(name, PLACEHOLDER);
   }
 
-  /** Var: `ρ ⊢ x ⇓ ρ(x)`. */
-  protected evalVar(env: ValEnv): Parser<Value> {
-    return parserOf<Value>(
-      new TreeExp("Var", [], (node: unknown) => {
-        const v = env.lookup((node as Var).name);
-        if (v === undefined) throw new Error(`unbound variable`);
-        return v;
-      }),
-    );
-  }
-
-  /** Lam: `ρ ⊢ λx:τ. body ⇓ ⟨x, body, ρ⟩` (a closure capturing the env). */
-  protected evalLam(env: ValEnv): Parser<Value> {
-    // Match the Lam node only (do not evaluate the body — it is captured
-    // unevaluated in the closure). The body subtree is left unconsumed in
-    // the stream; it is evaluated on demand when the closure is applied.
-    return parserOf<Value>(
-      new TreeExp(
-        "Lam",
-        [],
-        (node: unknown) =>
-          new Closure(
-            (node as Lam).param,
-            (node as Lam).type,
-            (node as Lam).body,
-            env,
-          ),
-      ),
-    );
+  /** Lam: `ρ ⊢ λx:τ. body ⇓ ⟨x, τ, bodySpan, ρ⟩`. */
+  protected lam(_param: string, _type: Type, _body: Value): Value {
+    // `lam` receives the body's *value* under a placeholder env — discarded.
+    // The body's span was captured in the overridden `lambdaProd` below.
+    // This method is not called directly; see `lambdaProd` override.
+    throw new Error("lam should not be called directly; see lambdaProd");
   }
 
   /**
-   * App: `ρ ⊢ e₁ e₂ ⇓ v` where `ρ ⊢ e₁ ⇓ ⟨x,body,ρ'⟩`, `ρ ⊢ e₂ ⇓ v₂`,
-   * and `ρ' ⊢ body[x:=v₂] ⇓ v`.  The body re-evaluation is a **nested
-   * tree-parse** over the closure's body subtree under `ρ'.extend(x, v₂)` —
-   * the higher-order attribute.
+   * App: `ρ ⊢ e₁ e₂ ⇓ v` where `ρ ⊢ e₁ ⇓ ⟨x,τ,span,ρ'⟩`, `ρ ⊢ e₂ ⇓ v₂`,
+   * and `ρ' ⊢ body[x:=v₂] ⇓ v`.  The body re-evaluation re-parses the
+   * closure's body substring under `ρ'.extend(x, v₂)` — the higher-order
+   * attribute.
    */
-  protected evalApp(env: ValEnv): Parser<Value> {
-    return parserOf<Value>(
-      new TreeExp(
-        "App",
-        [this.evalExpr(env)._exp, this.evalExpr(env)._exp],
-        (_node: unknown, [fnVal, argVal]: unknown[]) => {
-          if (!(fnVal instanceof Closure)) {
-            throw new Error(`cannot apply non-function`);
-          }
-          const bodyEnv = (fnVal.env as ValEnv).extend(
-            fnVal.param,
-            argVal as Value,
-          );
-          // Higher-order step: re-parse the closure body subtree under bodyEnv.
-          const bodyToks = flattenTree(fnVal.body as Term, termChildren);
-          const results = [
-            ...this._parseTreeWith(bodyToks, this.evalExpr(bodyEnv)),
-          ];
-          if (results.length === 0) throw new Error(`stuck application`);
-          return results[0]!;
-        },
-      ),
-    );
+  protected app(fn: Value, arg: Value): Value {
+    if (!(fn instanceof Closure)) throw new Error(`cannot apply non-function`);
+    const bodyEnv = fn.env.extend(fn.param, arg);
+    // Re-parse the body substring under bodyEnv. Save/restore _inputOffset
+    // so spans captured inside the re-parse are absolute (relative to _input).
+    const savedOffset = this._inputOffset;
+    this._inputOffset = fn.bodySpan.start;
+    try {
+      const results = [...this._forward(
+        this._input,
+        fn.bodySpan,
+        this.exprProd(bodyEnv),
+      )];
+      if (results.length === 0) throw new Error(`stuck application`);
+      return results[0]!;
+    } finally {
+      this._inputOffset = savedOffset;
+    }
   }
 
   /** Let: `ρ ⊢ let x:τ = def in body ⇓ v` where `ρ ⊢ def ⇓ v₁`, `ρ ⊢ body[x:=v₁] ⇓ v`. */
-  protected evalLet(env: ValEnv): Parser<Value> {
-    return parserOf<Value>(
-      new TreeExp(
-        "Let",
-        [this.evalExpr(env)._exp],
-        (node: unknown, [defVal]: unknown[]) => {
-          // def evaluated under ρ; body evaluated under ρ[x:=v₁] via a
-          // nested tree-parse (the higher-order step, as in `app`).
-          const bodyEnv = env.extend((node as Let).name, defVal as Value);
-          const bodyToks = flattenTree((node as Let).body, termChildren);
-          const results = [
-            ...this._parseTreeWith(bodyToks, this.evalExpr(bodyEnv)),
-          ];
-          if (results.length === 0) throw new Error(`stuck let`);
-          return results[0]!;
-        },
+  protected let_(_name: string, _type: Type, _def: Value, _body: Value): Value {
+    // `let_` receives the body's value under a placeholder env — discarded.
+    // The body is re-evaluated under the real env in the `letProd` override.
+    throw new Error("let_ should not be called directly; see letProd");
+  }
+
+  protected varRef(name: string, ctx: unknown): Value {
+    const v = (ctx as ValEnv).lookup(name);
+    if (v === undefined) throw new Error(`unbound variable: ${name}`);
+    return v;
+  }
+  protected boolLit(b: boolean): Value {
+    return b;
+  }
+  protected intLit(n: number): Value {
+    return n;
+  }
+  protected paren(e: Value): Value {
+    return e;
+  }
+
+  /**
+   * Override `lambdaProd` to capture the body's input span in a closure
+   * instead of evaluating the body. The body is parsed under a placeholder
+   * env (so `x` is bound and the parse succeeds), but only the **span** is
+   * kept — the body's value is discarded. The real evaluation happens when
+   * the closure is applied (`app` re-parses the substring).
+   */
+  @rule
+  protected override lambdaProd(ctx: unknown): Parser<Value> {
+    return seq(
+      this.sseq(
+        this.lambdaHead,
+        this.ident,
+        char(":"),
+        this.type,
+        char("."),
       ),
-    );
+      this.ws,
+    ).chain(([[, param, , ty]]) => {
+      assert(typeof param === "string", "lambda param must be a string");
+      assert(
+        ty instanceof TVar || ty instanceof TFun,
+        "lambda type must be a Type",
+      );
+      // Parse the body under a placeholder env (x bound to undefined) so the
+      // parse succeeds; capture the span, discard the value.
+      const placeholderCtx = this.extendCtx(ctx, param, ty);
+      return this.exprProd(placeholderCtx)
+        .map((_body, span) =>
+          new Closure(
+            param,
+            ty,
+            {
+              start: span.start + this._inputOffset,
+              end: span.end + this._inputOffset,
+            },
+            ctx as ValEnv,
+          )
+        );
+    }).map(([, result]) => result);
   }
 
-  protected evalBool(_env: ValEnv): Parser<Value> {
-    return parserOf<Value>(
-      new TreeExp("BoolLit", [], (node: unknown) => (node as BoolLit).value),
-    );
-  }
-
-  protected evalInt(_env: ValEnv): Parser<Value> {
-    return parserOf<Value>(
-      new TreeExp("IntLit", [], (node: unknown) => (node as IntLit).value),
-    );
+  /**
+   * Override `letProd` to parse the body under the real env (extended with
+   * def's value). Unlike `lambdaProd`, the body is evaluated in the same
+   * pass — `def`'s value is available from the `chain`, so the body parser
+   * runs under `ρ[name:=def]` directly. No span capture or `_forward` needed.
+   */
+  @rule
+  protected override letProd(ctx: unknown): Parser<Value> {
+    return seq(
+      literal("let"),
+      this.ws1,
+      this.ident,
+      this.ws,
+      char(":"),
+      this.ws,
+      this.type,
+      this.ws,
+      char("="),
+      this.ws,
+    ).chain(([, , name]) =>
+      // Parse def under the outer ctx.
+      this.exprProd(ctx)
+        .map((def) => ({ name, def }))
+        .chain(({ name, def }) =>
+          seq(this.ws1, literal("in"), this.ws1)
+            .chain(() => {
+              // Body parsed under ρ[name:=def] — same pass, no re-parse.
+              const bodyCtx = (ctx as ValEnv).extend(name, def);
+              return this.exprProd(bodyCtx)
+                .map((body) => body);
+            })
+            .map(([, result]) => result)
+        )
+        .map(([, result]) => result)
+    ).map(([, result]) => result);
   }
 }
 

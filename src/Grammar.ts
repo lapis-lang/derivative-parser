@@ -1,6 +1,7 @@
 import { Parser } from "./Parser.ts";
 import {
   DelayedExp,
+  type Span,
   type Tok,
   type TreeTok,
   ZipperDriver,
@@ -183,6 +184,33 @@ export abstract class Grammar<S extends GrammarShape = GrammarShape> {
   ): Set<T> {
     assertInvariants(this);
     return new ZipperDriver().parseTree<T>(start._exp, treeTokens);
+  }
+
+  /**
+   * Re-parse a substring of `input` under `start` — the higher-order attribute
+   * combinator for one-pass evaluation.
+   *
+   * During a single parse pass, a semantic action may need to re-evaluate a
+   * fragment of the input under a different inherited context (e.g. applying
+   * a closure: re-evaluate the body under an extended environment). This
+   * method spins up a fresh {@link ZipperDriver} over the substring
+   * `input.slice(span.start, span.end)` rooted at `start`, and returns the
+   * resulting parse forest. Per-pass memo isolation ensures the nested driver
+   * does not leak state into the outer parse.
+   *
+   * This lets an evaluator be a single grammar class extending the abstract
+   * grammar (like a type checker), with no intermediate AST — the
+   * higher-order step (re-evaluating a closure body) re-parses the original
+   * source substring under the extended environment.
+   */
+  protected _forward<T>(
+    input: string,
+    span: Span,
+    start: Parser<T>,
+  ): Set<T> {
+    assertInvariants(this);
+    const substring = input.slice(span.start, span.end);
+    return new ZipperDriver().parse<T>(start._exp, this._toTokens(substring));
   }
 }
 
