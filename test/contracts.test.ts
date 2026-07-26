@@ -19,7 +19,7 @@ import {
   requires,
   setCheckedMode,
 } from "../src/contracts.ts";
-import { Grammar, rule } from "../src/index.ts";
+import { diagnostic, empty, Grammar, rule } from "../src/index.ts";
 import type { Parser } from "../src/index.ts";
 import { assertEquals, assertThrows } from "@std/assert";
 
@@ -30,7 +30,7 @@ import { assertEquals, assertThrows } from "@std/assert";
  */
 class ContractedGrammar extends Grammar<{ start: unknown }> {
   override start(): Parser<unknown> {
-    return this.empty();
+    return empty();
   }
 }
 
@@ -587,7 +587,7 @@ Deno.test("@rescue — registers a handler retrievable via findRescueHandler", (
     @rescue((_self, failure) => failure)
     @rule
     protected prod(): Parser<unknown> {
-      return this.empty();
+      return empty();
     }
   }
   const d = new RescueDemo();
@@ -600,13 +600,13 @@ Deno.test("@rescue — handler is inherited by subclasses that don't re-declare"
     @rescue(() => "base-rescue")
     @rule
     protected prod(): Parser<unknown> {
-      return this.empty();
+      return empty();
     }
   }
   class RescueSub extends RescueBase {
     @rule
     protected override prod(): Parser<unknown> {
-      return this.empty();
+      return empty();
     }
   }
   const s = new RescueSub();
@@ -624,14 +624,14 @@ Deno.test("@rescue — subclass override replaces the handler (most-derived wins
     @rescue(() => "base-rescue")
     @rule
     protected prod(): Parser<unknown> {
-      return this.empty();
+      return empty();
     }
   }
   class RescueSub extends RescueBase {
     @rescue(() => "sub-rescue")
     @rule
     protected override prod(): Parser<unknown> {
-      return this.empty();
+      return empty();
     }
   }
   const s = new RescueSub();
@@ -646,7 +646,7 @@ Deno.test("@rescue — findRescueHandler returns undefined when no handler decla
   class NoRescue extends ContractedGrammar {
     @rule
     protected prod(): Parser<unknown> {
-      return this.empty();
+      return empty();
     }
   }
   const d = new NoRescue();
@@ -657,7 +657,7 @@ Deno.test("diagnostic() — produces an epsilon parser carrying a Diagnostic", (
   class DiagDemo extends ContractedGrammar {
     @rule
     protected prod(): Parser<unknown> {
-      return this.diagnostic("something went wrong", "test-reason");
+      return diagnostic("something went wrong", "test-reason");
     }
     override start(): Parser<unknown> {
       return this.prod();
@@ -688,7 +688,7 @@ Deno.test("@rescue + @rule — decorator order does not matter", () => {
     @rescue(() => "rescue-A")
     @rule
     protected prod(): Parser<unknown> {
-      return this.empty();
+      return empty();
     }
   }
 
@@ -697,7 +697,7 @@ Deno.test("@rescue + @rule — decorator order does not matter", () => {
     @rule
     @rescue(() => "rescue-B")
     protected prod(): Parser<unknown> {
-      return this.empty();
+      return empty();
     }
   }
 
@@ -726,7 +726,7 @@ Deno.test("@rescue — can decorate a getter production", () => {
     @rescue(() => "getter-rescue")
     @rule
     protected get prod(): Parser<unknown> {
-      return this.empty();
+      return empty();
     }
   }
   const d = new GetterRescue();

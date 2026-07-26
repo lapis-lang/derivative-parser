@@ -1,61 +1,22 @@
 /**
- * Arithmetic with variables — a warm-up for *semantics as grammar*.
- *
- * This is the surface language of `arith.ts` (numbers, `+`, `*`,
- * parentheses) extended with **identifiers**:
- *
- *   expr  →  add
- *   add   →  add + mul | mul
- *   mul   →  mul * atom | atom
- *   atom  →  ( expr ) | id | digits
- *
- * The new idea — compared with `arith.ts` — is that every production is
- * **parameterised by an environment**:
- *
- *   @rule expr(env: Env): Parser<S["expr"]>
- *
- * `env` is an *inherited attribute*: it flows downward from the grammar's
- * entry point into every sub-term.  This is exactly the pattern the ChatGPT
- * discussion calls "productions as parameterised methods": the production is
- * no longer merely `Input → ParseTree` but `Context × Input → Result`,
- * turning a context-free grammar into a context-sensitive one without any
- * extra machinery.
- *
- * The environment here is *read-only* — it is supplied at the top level and
- * only consulted by variable references.  This keeps the example honest:
- * inherited attributes that depend on *synthesised* results (e.g. evaluating
- * `let x = def in body` needs `def`'s value before parsing `body`) cannot be
- * threaded in a single pass without a monadic bind, so we defer that to the
- * STLC example where the context is extended with *syntactic* annotations
- * (types) that are known before the body is parsed.
- *
- * Two concrete interpretations (the Bracha / initial-algebra pattern from
- * `arith.ts`) are supplied by choosing the shape `S`:
- *
- *   • `ArithVarEval`  ⇒ everything is `number`  — evaluator under `env`.
- *   • `ArithVarAST`   ⇒ everything is `Exp`      — AST builder; `env` is
- *                       threaded but ignored, demonstrating that the *same*
- *                       parameterised grammar supports an interpretation that
- *                       does not use the inherited context.
- *
- * Usage:
- *   const g = new ArithVarEval();
- *   const env = Env.empty().extend("x", 3).extend("y", 4);
- *   const [v] = g.parseWith("x*y + 2", env);   // v === 14
+ * Arithmetic with variables — parameterised productions threading an
+ * environment as inherited attribute. Two interpretations: evaluator and
+ * AST builder. See the README for the full discussion.
  */
 
 import { Grammar, rule } from "../src/index.ts";
+import {
+  char,
+  digits as digitsLexeme,
+  ident as identLexeme,
+  or,
+  ws as wsLexeme,
+} from "../src/index.ts";
 import type { Parser } from "../src/index.ts";
 
 /* ─── Environment ────────────────────────────────────────────────────── */
 
-/**
- * A persistent environment mapping names to values.
- *
- * `lookup` returns `undefined` for unbound names; `extend` returns a *new*
- * environment (structural sharing via a parent link), so the same `env` can be
- * reused across sibling sub-terms without mutation.
- */
+/** Persistent environment mapping names to values. */
 export class Env {
   constructor(
     readonly name: string | null,
@@ -98,10 +59,7 @@ export abstract class AbstractArithVar<S extends ArithVarShape>
   /** Reference to a bound identifier, looked up in `env`. */
   protected abstract ref(name: string, env: Env): S["factor"];
 
-  /**
-   * Parse `input` under environment `env`.  The environment is the inherited
-   * context threaded through every production.
-   */
+  /** Parse `input` under environment `env` (inherited context). */
   parseWith(input: string, env: Env): Set<S["expr"]> {
     return this._parseWith(input, this.expr(env));
   }
@@ -120,15 +78,9 @@ export abstract class AbstractArithVar<S extends ArithVarShape>
   /** Production: `add → add + mul | mul` (left-recursive, parameterised). */
   @rule
   protected addProd(env: Env): Parser<S["expr"]> {
-    return this.or(
-      this.seq(
-        this.addProd(env),
-        this.ws,
-        this.char("+"),
-        this.ws,
-        this.mulProd(env),
-      )
-        .map(([l, , , , r]) => this.add(l, r)),
+    return or(
+      this.sseq(this.addProd(env), char("+"), this.mulProd(env))
+        .map(([l, , r]) => this.add(l, r)),
       this.mulProd(env) as Parser<S["expr"]>,
     );
   }
@@ -136,15 +88,9 @@ export abstract class AbstractArithVar<S extends ArithVarShape>
   /** Production: `mul → mul * atom | atom` (left-recursive, parameterised). */
   @rule
   protected mulProd(env: Env): Parser<S["term"]> {
-    return this.or(
-      this.seq(
-        this.mulProd(env),
-        this.ws,
-        this.char("*"),
-        this.ws,
-        this.atomProd(env),
-      )
-        .map(([l, , , , r]) => this.mul(l, r)),
+    return or(
+      this.sseq(this.mulProd(env), char("*"), this.atomProd(env))
+        .map(([l, , r]) => this.mul(l, r)),
       this.atomProd(env) as Parser<S["term"]>,
     );
   }
@@ -152,66 +98,28 @@ export abstract class AbstractArithVar<S extends ArithVarShape>
   /** Production: `atom → ( expr ) | id | digits` (parameterised). */
   @rule
   protected atomProd(env: Env): Parser<S["factor"]> {
-    return this.or(
-      this.seq(this.char("("), this.ws, this.expr(env), this.ws, this.char(")"))
-        .map(([, , e]) => this.paren(e)),
+    // `sseq` auto-inserts `ws` between terms — no manual `this.ws` threading.
+    return or(
+      this.sseq(char("("), this.expr(env), char(")"))
+        .map(([, e]) => this.paren(e)),
       this.ident.map((name) => this.ref(name, env)),
-      this.digits.map((s) => this.num(s)),
+      digitsLexeme().map((s) => this.num(s)),
     );
   }
 
   /* ── lexemes ─────────────────────────────────────────────────────── */
-
-  @rule
-  protected get digits(): Parser<string> {
-    return this.or(
-      this.seq(this.digit, this.digits).map(([d, ds]) => d + ds),
-      this.digit,
-    );
-  }
-
-  protected get digit(): Parser<string> {
-    return this.pred((c) => c >= "0" && c <= "9", "<digit>");
-  }
+  //
+  // `ident`, `digits`, and `ws` now come from the shared lexeme library
+  // (`src/lexemes.ts`) — no more hand-rolled repetition in every grammar.
 
   @rule
   protected get ident(): Parser<string> {
-    return this.seq(this.identFirst, this.identRest)
-      .map(([h, t]) => h + t);
-  }
-
-  protected get identFirst(): Parser<string> {
-    return this.pred((c) => c >= "a" && c <= "z", "<letter>");
+    return identLexeme();
   }
 
   @rule
-  protected get identRest(): Parser<string> {
-    return this.or(
-      this.seq(this.identChar, this.identRest).map(([c, cs]) => c + cs),
-      this.epsilon(""),
-    );
-  }
-
-  protected get identChar(): Parser<string> {
-    return this.pred(
-      (c) => (c >= "a" && c <= "z") || (c >= "0" && c <= "9") || c === "_",
-      "<id-char>",
-    );
-  }
-
-  protected get wsChar(): Parser<string> {
-    return this.pred(
-      (c) => c === " " || c === "\t" || c === "\n" || c === "\r",
-      "<ws>",
-    );
-  }
-
-  @rule
-  protected get ws(): Parser<string> {
-    return this.or(
-      this.seq(this.wsChar, this.ws).map(([c, cs]) => c + cs),
-      this.epsilon(""),
-    );
+  protected override get ws(): Parser<string> {
+    return wsLexeme();
   }
 }
 

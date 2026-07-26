@@ -1,28 +1,6 @@
 /**
- * Grammar-native contracts — Design by Contract primitives adapted to the
- * parsing domain.
- *
- * This module provides a small contract system (no external dependency)
- * inspired by [`decorator-contracts`](https://github.com/final-hill/decorator-contracts)
- * but adapted for `Grammar`:
- *
- * - `assert` — inline assertions with TypeScript type narrowing.
- * - `implies` / `iff` — material implication and biconditional for predicate
- *   composition.
- * - `@requires` — inference-rule premises; on failure returns `undefined`
- *   (graceful — the calling `chain`/`.map` produces `empty()`), unlike the
- *   reference library which throws.
- * - `@ensures` — inference-rule conclusions; on failure throws `ContractError`
- *   (a violated postcondition is a bug, not a parse failure).
- * - `@invariant` — grammar well-formedness; checked after construction and
- *   after each contracted semantic action.
- * - `checkedMode` — per-instance flag (with a global default); when `false`,
- *   all checks are skipped for that instance (zero overhead in production).
- *
- * Contracts decorate **semantic-action methods** (e.g. `app`, `lam`,
- * `varRef`) — plain methods called inside `.map()` callbacks — not `@rule`
- * productions, so they compose with the existing `@rule` machinery without
- * engine changes.
+ * Design-by-contract decorators for grammar semantic actions.
+ * See the README for the full introduction.
  *
  * @module
  */
@@ -31,12 +9,7 @@
  *  Errors
  * ====================================================================== */
 
-/**
- * Thrown by `assert` when an inline assertion fails.
- *
- * Assertions catch *bugs* (violated invariants of the implementation), not
- * parse failures — hence they always throw, never return `undefined`.
- */
+/** Thrown by `assert()` on assertion failure. */
 export class AssertionError extends Error {
   constructor(message = "Assertion Error") {
     super(message);
@@ -44,13 +17,7 @@ export class AssertionError extends Error {
   }
 }
 
-/**
- * Thrown by `@ensures` / `@invariant` when a contract is violated.
- *
- * A violated postcondition or invariant is a bug in the semantic-action
- * implementation, not a parse failure — hence it throws rather than
- * producing an empty parse forest.
- */
+/** Thrown by `@ensures`/`@invariant` on contract violation. */
 export class ContractError extends Error {
   constructor(message: string) {
     super(message);
@@ -63,21 +30,8 @@ export class ContractError extends Error {
  * ====================================================================== */
 
 /**
- * Inline assertion. If `condition` is falsy, throws {@link AssertionError}.
- *
- * In TypeScript, `assert` also narrows the type of `condition` — useful for
- * narrowing the `unknown`-typed `ctx` parameter in parameterised productions:
- *
- *   assert(typeof param === "string");
- *   // param: string
- *
- * `assert` should **not** be used for validating arguments to semantic
- * actions — use `@requires` for that (which fails gracefully). Use `assert`
- * for invariants of the implementation that, if violated, indicate a bug.
- *
- * @param condition - The condition to test.
- * @param message - Optional message displayed if the condition is false.
- * @throws {AssertionError} If `condition` is falsy.
+ * Inline assertion; throws `AssertionError` on failure, narrows `c`'s type.
+ * Use for bugs, not parse failures (use `@requires` for those).
  */
 export function assert(
   condition: unknown,
@@ -88,31 +42,12 @@ export function assert(
   }
 }
 
-/**
- * Material implication: `p → q`. Logically equivalent to `!p || q`.
- *
- * Useful for composing predicates in `@requires` / `@ensures` so that the
- * expression reads as logic rather than boolean arithmetic:
- *
- *   @requires((_self, fn: Type, arg: Type) =>
- *     implies(fn instanceof TFun, typeEq(fn.dom, arg)))
- *
- * @param p - The antecedent.
- * @param q - The consequent.
- * @returns `!p || q`.
- */
+/** Material implication `!p || q`. */
 export function implies(p: boolean, q: boolean): boolean {
   return !p || q;
 }
 
-/**
- * Biconditional: `p ↔ q` ("p if and only if q"). Logically equivalent to
- * `implies(p, q) && implies(q, p)`, i.e. `(p && q) || (!p && !q)`.
- *
- * @param p - The first boolean.
- * @param q - The second boolean.
- * @returns `(p && q) || (!p && !q)`.
- */
+/** Biconditional `(p && q) || (!p && !q)`. */
 export function iff(p: boolean, q: boolean): boolean {
   return (p && q) || (!p && !q);
 }
@@ -129,13 +64,7 @@ export function iff(p: boolean, q: boolean): boolean {
  */
 let globalCheckedMode = true;
 
-/**
- * Per-instance checked-mode overrides. A `Grammar` instance not in this
- * map uses {@link globalCheckedMode}. Scoping the flag per-instance (rather
- * than purely global) prevents concurrent/overlapping executions — e.g.
- * parallel parses or interleaved async tasks — from disabling each other's
- * checks via {@link withoutChecks}.
- */
+/** Per-instance override for contract checking. */
 const instanceCheckedMode = new WeakMap<object, boolean>();
 
 /**
@@ -164,32 +93,14 @@ export function getCheckedMode(): boolean {
   return globalCheckedMode;
 }
 
-/**
- * Set the global default for contract checking. Disable in production for
- * maximum performance:
- *
- *   import { setCheckedMode } from "@lapis-lang/zipper-grammar";
- *   setCheckedMode(process.env.NODE_ENV === "development");
- *
- * The global default applies **live** to every instance that has no
- * explicit per-instance override — toggling it affects existing instances
- * immediately, not just new ones. (Per-instance overrides are used
- * internally by `withoutChecks` for recursion guarding; they are not part
- * of the public API.)
- */
+/** Toggle the global default for contract enforcement. Applies live to all instances. */
 export function setCheckedMode(enabled: boolean): void {
   globalCheckedMode = enabled;
 }
 
 /**
- * Run `fn` with contract checks temporarily disabled for `instance` only.
- * Used inside predicate evaluation to avoid infinite recursion when a
- * predicate calls a contracted method on the same instance. Scoped per
- * instance so concurrent operations on *other* instances are unaffected.
- * Restores the prior state on exit, even if `fn` throws: if the instance
- * had no explicit override (was falling back to the global default), the
- * override is deleted so it continues to fall back; otherwise the prior
- * override value is restored.
+ * Run `fn` with contract checking disabled for `self`.
+ * Restores prior state on exit.
  */
 function withoutChecks<T>(instance: object, fn: () => T): T {
   const hadOverride = instanceCheckedMode.has(instance);
@@ -213,12 +124,7 @@ function withoutChecks<T>(instance: object, fn: () => T): T {
  *  Contract metadata (Symbol.metadata)
  * ====================================================================== */
 //
-// Predicates are stored on `Class[Symbol.metadata]` via the TS5 stage-3
-// decorator `ctx.metadata` / `ctx.addInitializer` API. Each decorator pushes
-// its predicate into an array keyed by feature name. Subcontracting falls
-// out naturally: `Class[Symbol.metadata]?.requires?.[name]` walks the
-// prototype chain, so a subclass's predicates compose with its ancestors'
-// (OR-ed for `@requires`, AND-ed for `@ensures` / `@invariant`).
+// Subcontracting: @invariant AND-ed, @requires OR-ed, @ensures AND-ed across inheritance.
 
 /** Metadata shape stored on each contracted class via `Symbol.metadata`. */
 export interface ContractMetadata {
@@ -319,15 +225,8 @@ export type EnsuresPredicate<
  * ====================================================================== */
 
 /**
- * `@invariant(pred)` — class decorator declaring a class invariant.
- *
- * The invariant is checked after construction and after each contracted
- * semantic action (via {@link assertInvariants}). When subclassing, the
- * subclass invariant is AND-ed with the base class invariant (strengthened),
- * per Liskov subcontracting.
- *
- *   @invariant((self: AbstractSTLC<any>) => self.start() !== undefined)
- *   class AbstractSTLC<...> extends Grammar<...> { ... }
+ * Class invariant; checked after construction and after each contracted call.
+ * AND-ed across inheritance.
  */
 export function invariant<
   This extends abstract new (...args: unknown[]) => unknown,
@@ -434,28 +333,8 @@ function tryInvariants(instance: object): ContractError | null {
  * ====================================================================== */
 
 /**
- * `@requires(pred)` — method decorator declaring a precondition (an
- * inference-rule premise).
- *
- * Unlike the reference library (which throws on failure), `@requires`
- * **returns `undefined`** when the precondition fails — the calling
- * `chain`/`.map` callback then produces `empty()`, so the parse branch is
- * rejected gracefully rather than raising an exception. This is the core
- * domain adaptation: a failed premise means the inference rule doesn't
- * apply, so the parse forest for that branch is empty.
- *
- * When subclassing, preconditions are OR-ed (weakened) across the
- * inheritance chain: the subclass accepts a superset of the inputs.
- *
- *   @requires((_self, fn: Type, arg: Type) =>
- *     fn instanceof TFun && typeEq(fn.dom, arg))
- *   protected app(fn: Type, arg: Type): Type { ... }
- *
- * The decorator only **registers** the predicate in the class's contract
- * metadata; the actual check is performed by the `Proxy` dispatch layer
- * in {@link contractProxyHandler} (see {@link Grammar}). This means
- * inherited preconditions are enforced even on subclass overrides that do
- * not re-declare `@requires`.
+ * Precondition; on failure returns `undefined` (graceful → empty forest).
+ * OR-ed across inheritance.
  */
 export function requires<This extends object, A extends unknown[], R>(
   predicate: RequiresPredicate<This, A>,
@@ -483,25 +362,8 @@ export function requires<This extends object, A extends unknown[], R>(
  * ====================================================================== */
 
 /**
- * `@ensures(pred)` — method decorator declaring a postcondition (an
- * inference-rule conclusion).
- *
- * The predicate receives `(self, args, old, result)` where `old` is a
- * shallow snapshot of `self`'s own enumerable *string* keys taken before
- * the method body runs, and `result` is the method's return value. If the
- * postcondition fails, {@link ContractError} is thrown — a violated
- * postcondition is a bug in the semantic action, not a parse failure.
- *
- * When subclassing, postconditions are AND-ed (strengthened) across the
- * inheritance chain: the subclass guarantees a more specific postcondition.
- *
- *   @ensures((_self, _args, _old, result: Type) =>
- *     result instanceof TVar || result instanceof TFun)
- *   protected app(fn: Type, arg: Type): Type { ... }
- *
- * Like `@requires`, this decorator only **registers** the predicate; the
- * check is performed by the `Proxy` dispatch layer, so inherited
- * postconditions are enforced on undecorated overrides.
+ * Postcondition `(self, args, old, result) => boolean`; throws `ContractError` on failure.
+ * AND-ed across inheritance.
  */
 export function ensures<This extends object, A extends unknown[], R>(
   predicate: EnsuresPredicate<This, A, R>,
@@ -563,19 +425,7 @@ export interface ParseFailure {
 }
 
 /**
- * Handler invoked when a `@rescue`-decorated production yields an empty
- * parse forest. May return a `Parser<T>` (e.g. `this.empty()` or a
- * diagnostic-bearing epsilon). The optional `retry` callback re-runs the
- * production once; it is reserved for future engine integration (not yet
- * wired — see issue #4 Phase 2). If the handler returns without calling
- * `retry`, its return value is used as the production's result.
- *
- *   @rescue((self, failure, _args, _retry) => {
- *     if (failure.reason === "type-mismatch") {
- *       self.diagnostic(`type error: ${failure.expected} ≠ ${failure.actual}`);
- *     }
- *     return self.empty();
- *   })
+ * Parse-failure recovery handler. Invoked when a production yields an empty forest.
  */
 export type RescueHandler = (
   self: object,
@@ -585,29 +435,9 @@ export type RescueHandler = (
 ) => unknown;
 
 /**
- * `@rescue(handler)` — method/getter decorator declaring a rescue handler
- * for a production. When the production's parse yields an empty forest,
- * the handler is invoked with a {@link ParseFailure} describing the
- * failure. The handler may report a diagnostic or return an alternative
- * parser. The `retry` callback is reserved for future engine integration
- * (not yet wired — see issue #4 Phase 2).
- *
- * Inherited unless overridden: a subclass that does not re-declare
- * `@rescue` inherits the parent's handler (most-derived wins).
- *
- *   @rescue((self, failure, _args, retry) => {
- *     self.diagnostic(`type error: ${failure.message}`);
- *     return self.empty();
- *   })
- *   @rule
- *   protected override appProd(ctx: unknown): Parser<Type> { ... }
- *
- * The decorator accepts both **getter** and **method** productions; the
- * decorator order with `@rule` does not matter (see
- * `test/contracts.test.ts`).
+ * Parse-failure recovery; most-derived handler wins.
+ * Decorator factory for `@rescue` — accepts both getter and method productions.
  */
-
-/** Decorator factory for `@rescue` — accepts both getter and method productions. */
 export function rescue(
   handler: RescueHandler,
 ): (
@@ -654,54 +484,15 @@ export function findRescueHandler(
  *  Proxy dispatch — enforces contracts on every method call
  * ====================================================================== */
 //
-// The decorators above only *register* predicates in the class's contract
-// metadata. The actual enforcement happens here: a `Proxy` handler that
-// intercepts method calls and wraps them with the contract checks. This is
-// the mechanism that lets inherited `@requires` / `@ensures` fire on
-// subclass overrides that do not re-declare the decorators — the `get`
-// trap sees every method access and applies the checks by walking the
-// prototype chain's metadata.
-//
-// Key design points (resolving the issue #4 "No Proxy" concern):
-//   • No `Contracted` base class — the handler is applied in `Grammar`'s
-//     own constructor via `return new Proxy(this, contractProxyHandler)`.
-//   • No `.new()` factory — `new Grammar()` returns the Proxy directly
-//     because a constructor may return a different object.
-//   • `@rule` memoization is unaffected — the `WeakMap` is keyed on the
-//     *target* (the unwrapped instance), which the Proxy forwards to
-//     transparently. Internal `this` references resolve on the target.
-//   • `checkedMode` gates the `get` trap: when disabled, it returns the
-//     raw method with zero overhead.
+// Proxy dispatches to target, wrapping contracted methods with pre/post checks.
 
-/**
- * The set of property keys that must bypass contract checking (internal
- * machinery, combinators, and the parse driver). Contract checks only apply
- * to *semantic-action* methods — the user-facing methods that return
- * values, not the `Parser`-returning productions or engine internals.
- *
- * Rather than maintain an allow-list (fragile), we check whether the
- * resolved property is a function that is *not* a `@rule`-decorated
- * production. `@rule` replaces the method on the prototype with a wrapper
- * that returns a `Parser`; we detect productions by a sentinel applied
- * by `_markProduction`.
- */
+/** Property keys that bypass contract checking (internal helpers, symbols). */
 const CONTRACT_SKIP_KEYS = new Set<PropertyKey>([
   "constructor",
   "start", // entry production is a @rule getter; skip
 ]);
 
-/**
- * `ProxyHandler` that enforces `@requires` / `@ensures` / `@invariant` on
- * every method call. Applied by `Grammar`'s constructor. When `checkedMode`
- * is disabled, the `get` trap returns the raw method (zero overhead).
- *
- * Order of assertions (per the reference library):
- *   invariant(before) → requires → body → ensures → invariant(after)
- *
- * `@requires` failure is **graceful**: the method returns `undefined`
- * (the calling `chain`/`.map` produces `empty()`). `@ensures` /
- * `@invariant` failure throws `ContractError`.
- */
+/** Proxy handler enforcing contracts on method calls. */
 export const contractProxyHandler: ProxyHandler<object> = {
   get(target, prop, receiver) {
     const value = Reflect.get(target, prop, receiver);

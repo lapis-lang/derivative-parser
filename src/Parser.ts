@@ -1,11 +1,4 @@
-/**
- * Thin, type-safe wrapper around a PwZ `Exp` node.
- *
- * `Parser<T>` is the user-facing type for all combinators. It carries the
- * underlying `Exp` (from `src/zipper/zipper.ts`) and exposes the fluent
- * algebra that `Grammar` uses to build grammars. No derivative machinery,
- * no Pool — those concerns now live entirely in the zipper engine.
- */
+/** Thin, type-safe wrapper around a PwZ `Exp` node. */
 
 import {
   AltExp,
@@ -20,16 +13,8 @@ import {
 } from "./zipper/zipper.ts";
 
 /**
- * `Parser<T>` — the user-facing combinator type.
- *
- * A thin, type-safe wrapper around a PwZ `Exp` node. It carries the
- * underlying `Exp` (from `src/zipper/zipper.ts`) and exposes the fluent
- * algebra that `Grammar` uses to build grammars. No derivative machinery,
- * no Pool — those concerns live entirely in the zipper engine.
- *
- * Instances are constructed by `Grammar` combinators (`char`, `seq`, `or`,
- * …) and by the `@rule` decorator; users rarely call `new Parser(...)`
- * directly.
+ * The user-facing combinator type. Constructed by `Grammar` combinators and
+ * the `@rule` decorator; users rarely call `new Parser(...)` directly.
  */
 export class Parser<T> {
   /** @internal — exposes the underlying Exp to the Grammar driver. */
@@ -79,22 +64,9 @@ export class Parser<T> {
   }
 
   /**
-   * Monadic bind — the L-attributed grammar combinator.
-   *
-   * Parse `this`; for each value `v` produced, call `fn(v)` to obtain the
-   * next parser and parse it.  The result is the pair `[v, w]` where `w` is
-   * the second parser's result.
-   *
-   * Unlike `then`, the second parser is constructed *after* the first has
-   * been parsed, so it can depend on the first's *synthesised* value.  This
-   * enables one-pass context threading (L-attributed grammars): a left
-   * sibling's result determines the right sibling's inherited context.
-   *
-   *   this.type.chain(ty => this.expr(Γ.extend(name, ty)))
-   *
-   * **Note**: the second parser is not memoised at the `Exp` level (it is
-   * constructed fresh per parse-tree of `first`).  If it is a `@rule` method
-   * call, the `@rule` per-argument cache still applies.
+   * Monadic bind — the L-attributed grammar combinator. Parse `this`; for
+   * each value `v`, call `fn(v)` to get the next parser. Result is `[v, w]`.
+   * See the README for L-attributed grammar usage.
    */
   chain<U>(fn: (t: T) => Parser<U>): Parser<[T, U]> {
     return new Parser<[T, U]>(
@@ -102,12 +74,7 @@ export class Parser<T> {
     );
   }
 
-  /**
-   * A* — Kleene star; parse trees are arrays `T[]`.
-   *
-   * Implemented as a cyclic `DelayedExp`:
-   *   rep = ε([]) | seq([A, rep], ([h, t]) => [h, ...t])
-   */
+  /** A* — Kleene star; parse trees are arrays `T[]`. */
   many(): Parser<T[]> {
     const inner = this._exp;
     const repExp: DelayedExp<T[]> = new DelayedExp<T[]>(() =>

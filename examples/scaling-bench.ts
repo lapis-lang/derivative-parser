@@ -1,13 +1,6 @@
-/**
- * Scaling benchmark: `S = S+S | 1` ambiguous left-recursive grammar.
- *
- * The unified Grammar engine (Parsing-with-Zippers + semantic actions)
- * is exercised at increasing input sizes to demonstrate asymptotic behaviour.
- *
- * Inputs are `1+1+…+1` with `n` ones.
- */
+/** Ambiguous grammar benchmark for asymptotic behaviour testing. */
 
-import { Grammar, rule } from "../src/index.ts";
+import { char, Grammar, or, rule, seq } from "../src/index.ts";
 import type { Parser } from "../src/index.ts";
 
 class Ambig extends Grammar<{ s: number }> {
@@ -16,9 +9,9 @@ class Ambig extends Grammar<{ s: number }> {
   }
   @rule
   get s(): Parser<number> {
-    return this.or(
-      this.seq(this.s, this.char("+"), this.s).map(([l, , r]) => l + r),
-      this.char("1").map(() => 1),
+    return or(
+      seq(this.s, char("+"), this.s).map(([l, , r]) => l + r),
+      char("1").map(() => 1),
     );
   }
 }

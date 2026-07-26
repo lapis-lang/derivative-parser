@@ -5,7 +5,7 @@
  */
 
 import { assert, assertEquals } from "@std/assert";
-import { Grammar, rule } from "../src/index.ts";
+import { char, epsilon, Grammar, or, rule, seq } from "../src/index.ts";
 import type { Parser } from "../src/index.ts";
 
 /* ─── Balanced parens (right-recursive form) ─────────────────────────── */
@@ -17,9 +17,9 @@ class BalancedParens extends Grammar<{ s: string }> {
 
   @rule
   get s(): Parser<string> {
-    return this.or(
-      this.seq(this.char("("), this.s, this.char(")"), this.s).map(() => "ok"),
-      this.epsilon("ok"),
+    return or(
+      seq(char("("), this.s, char(")"), this.s).map(() => "ok"),
+      epsilon("ok"),
     );
   }
 }
@@ -49,10 +49,10 @@ class AmbiguousAdd extends Grammar<{ s: number }> {
 
   @rule
   get s(): Parser<number> {
-    return this.or(
-      this.seq(this.s, this.char("+"), this.s)
+    return or(
+      seq(this.s, char("+"), this.s)
         .map(([l, , r]) => l + r),
-      this.char("1").map(() => 1),
+      char("1").map(() => 1),
     );
   }
 }

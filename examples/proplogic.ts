@@ -1,43 +1,16 @@
 /**
- * Propositional Logic — formulas, truth evaluation, and natural-deduction
- * proofs as grammar productions.
- *
- * This file demonstrates the Curry–Howard correspondence from the ChatGPT
- * discussion: **inference rules are a grammar over proofs**, and a
- * natural-deduction derivation is literally a parse tree.
- *
- * ─── Surface syntax ───────────────────────────────────────────────────
- *
- *   formula ::= imp
- *   imp      ::= imp → or | or              (right-associative →)
- *   or       ::= or ∨ and | and              (left-associative ∨)
- *   and      ::= and ∧ atom | atom           (left-associative ∧)
- *   atom     ::= ⊤ | ⊥ | var | ( formula ) | ¬ atom
- *
- *   var ::= [a-z]+
- *
- * ─── Interpretations ──────────────────────────────────────────────────
- *
- *   • `PropAST`   — shape `{formula:Formula; atom:Formula}`: formula builder.
- *   • `PropTruth` — `@rule formula(α): Parser<boolean>`: truth-table evaluator
- *                   under a variable assignment (inherited context, Pattern 2
- *                   with read-only env — like `arith-var.ts`).
- *   • `PropProof` — `@rule formula(Γ): Parser<NDProof>`: natural-deduction
- *                   proof builder.  `Γ` is the set of available hypotheses.
- *                   Each connective's introduction rule extends `Γ` for its
- *                   sub-proof.  A successful parse yields a proof tree —
- *                   "proofs as parse trees" (Curry–Howard).
- *
- * Usage:
- *   const g = new PropAST();
- *   const [f] = g.parse("p → p");           // Imp(Var("p"), Var("p"))
- *   const t = new PropTruth();
- *   const [v] = t.parseWith("p ∧ ¬p", {p:true});  // false
- *   const pr = new PropProof();
- *   const [proof] = pr.parseWith("p → p", new Set());  // ImpIntro(...)
+ * Propositional logic — formulas, truth evaluation, and natural-deduction
+ * proofs as grammar productions (Curry-Howard). See the README for details.
  */
 
 import { Grammar, rule } from "../src/index.ts";
+import {
+  char,
+  ident as identLexeme,
+  literal,
+  or,
+  ws as wsLexeme,
+} from "../src/index.ts";
 import type { Parser } from "../src/index.ts";
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -166,12 +139,7 @@ export interface PropShape {
   atom: unknown;
 }
 
-/**
- * Abstract propositional-logic grammar.  Precedence (loosest to tightest):
- *   → (right-assoc) > ∨ (left-assoc) > ∧ (left-assoc) > ¬ > atoms
- *
- * Subclasses implement semantic actions to choose the representation.
- */
+/** Abstract propositional-logic grammar. Precedence: → > ∨ > ∧ > ¬ > atoms. */
 export abstract class AbstractProp<S extends PropShape> extends Grammar<S> {
   /* ── semantic actions ────────────────────────────────────────────── */
 
@@ -192,121 +160,88 @@ export abstract class AbstractProp<S extends PropShape> extends Grammar<S> {
 
   @rule
   get formulaProd(): Parser<S["formula"]> {
-    return this.or(
-      this.seq(this.orProd, this.ws, this.arrow, this.ws, this.formulaProd)
-        .map(([l, , , , r]) => this.imp(l, r)),
+    return or(
+      this.sseq(this.orProd, this.arrow, this.formulaProd)
+        .map(([l, , r]) => this.imp(l, r)),
       this.orProd,
     );
   }
 
   protected get arrow(): Parser<string> {
-    return this.or(this.literal("→"), this.literal("->"));
+    return or(literal("→"), literal("->"));
   }
 
   /* ── or (left-assoc) ────────────────────────────────────────────── */
 
   @rule
   protected get orProd(): Parser<S["formula"]> {
-    return this.or(
-      this.seq(this.orProd, this.ws, this.orSym, this.ws, this.andProd)
-        .map(([l, , , , r]) => this.or_(l, r)),
+    return or(
+      this.sseq(this.orProd, this.orSym, this.andProd)
+        .map(([l, , r]) => this.or_(l, r)),
       this.andProd,
     );
   }
 
   protected get orSym(): Parser<string> {
-    return this.or(this.literal("∨"), this.literal("|"));
+    return or(literal("∨"), literal("|"));
   }
 
   /* ── and (left-assoc) ───────────────────────────────────────────── */
 
   @rule
   protected get andProd(): Parser<S["formula"]> {
-    return this.or(
-      this.seq(this.andProd, this.ws, this.andSym, this.ws, this.notProd)
-        .map(([l, , , , r]) => this.and_(l, r)),
+    return or(
+      this.sseq(this.andProd, this.andSym, this.notProd)
+        .map(([l, , r]) => this.and_(l, r)),
       this.notProd,
     );
   }
 
   protected get andSym(): Parser<string> {
-    return this.or(this.literal("∧"), this.literal("&"));
+    return or(literal("∧"), literal("&"));
   }
 
   /* ── not ────────────────────────────────────────────────────────── */
 
   @rule
   protected get notProd(): Parser<S["formula"]> {
-    return this.or(
-      this.seq(this.notSym, this.ws, this.atomProd)
-        .map(([, , a]) => this.not_(a) as unknown as S["formula"]),
+    return or(
+      this.sseq(this.notSym, this.atomProd)
+        .map(([, a]) => this.not_(a) as unknown as S["formula"]),
       this.atomProd as Parser<S["formula"]>,
     );
   }
 
   protected get notSym(): Parser<string> {
-    return this.or(this.literal("¬"), this.literal("~"));
+    return or(literal("¬"), literal("~"));
   }
 
   /* ── atom ───────────────────────────────────────────────────────── */
 
   @rule
   protected get atomProd(): Parser<S["atom"]> {
-    return this.or(
-      this.literal("⊤").map(() => this.top()),
-      this.literal("⊥").map(() => this.bot()),
-      this.seq(
-        this.char("("),
-        this.ws,
-        this.formulaProd,
-        this.ws,
-        this.char(")"),
-      )
-        .map(([, , e]) => this.paren(e)),
+    // `sseq` auto-inserts `ws` between terms in the parenthesised case.
+    return or(
+      literal("⊤").map(() => this.top()),
+      literal("⊥").map(() => this.bot()),
+      this.sseq(char("("), this.formulaProd, char(")"))
+        .map(([, e]) => this.paren(e)),
       this.ident.map((name) => this.var_(name, null)),
     );
   }
 
   /* ── lexemes ─────────────────────────────────────────────────────── */
+  //
+  // `ident` and `ws` now come from the shared lexeme library.
 
   @rule
   protected get ident(): Parser<string> {
-    return this.seq(this.identFirst, this.identRest)
-      .map(([h, t]) => h + t);
-  }
-
-  protected get identFirst(): Parser<string> {
-    return this.pred((c) => c >= "a" && c <= "z", "<letter>");
+    return identLexeme();
   }
 
   @rule
-  protected get identRest(): Parser<string> {
-    return this.or(
-      this.seq(this.identChar, this.identRest).map(([c, cs]) => c + cs),
-      this.epsilon(""),
-    );
-  }
-
-  protected get identChar(): Parser<string> {
-    return this.pred(
-      (c) => (c >= "a" && c <= "z") || (c >= "0" && c <= "9") || c === "_",
-      "<id-char>",
-    );
-  }
-
-  protected get wsChar(): Parser<string> {
-    return this.pred(
-      (c) => c === " " || c === "\t" || c === "\n" || c === "\r",
-      "<ws>",
-    );
-  }
-
-  @rule
-  protected get ws(): Parser<string> {
-    return this.or(
-      this.seq(this.wsChar, this.ws).map(([c, cs]) => c + cs),
-      this.epsilon(""),
-    );
+  protected override get ws(): Parser<string> {
+    return wsLexeme();
   }
 }
 
@@ -346,33 +281,8 @@ export class PropAST extends AbstractProp<{ formula: Formula; atom: Formula }> {
  * ══════════════════════════════════════════════════════════════════════ */
 
 /**
- * Truth-table evaluator.  `α` is a variable assignment (`Record<string, boolean>`).
- * Read-only inherited context — like `arith-var.ts`, the env is supplied
- * externally and never extended during parsing.  Threaded as a parameterised
- * `@rule` method argument (not mutable instance state), so it is safe for
- * concurrent use.
- *
- *   α(p) = b
- *   ──────────  (Var)
- *   α ⊨ p : b
- *
- *   α ⊨ ⊤ : true      α ⊨ ⊥ : false
- *
- *   α ⊨ A : a    α ⊨ B : b
- *   ────────────────────────  (∧)
- *   α ⊨ A ∧ B : a && b
- *
- *   α ⊨ A : a    α ⊨ B : b
- *   ────────────────────────  (∨)
- *   α ⊨ A ∨ B : a || b
- *
- *   α ⊨ A : a    α ⊨ B : b
- *   ──────────────────────────────  (→)
- *   α ⊨ A → B : !a || b
- *
- *   α ⊨ A : a
- *   ─────────────  (¬)
- *   α ⊨ ¬A : !a
+ * Truth-table evaluator under a variable assignment (inherited context,
+ * Pattern 2).
  */
 export class PropTruth
   extends AbstractProp<{ formula: boolean; atom: boolean }> {
@@ -403,20 +313,12 @@ export class PropTruth
     return e;
   }
 
-  /**
-   * Parse `input` under variable assignment `alpha`.  The assignment is
-   * threaded as an *inherited attribute* through parameterised `@rule`
-   * methods — no mutable instance state, safe for concurrent use.
-   */
+  /** Parse `input` under variable assignment `alpha` (inherited context). */
   parseWith(input: string, alpha: Record<string, boolean>): Set<boolean> {
     return this._parseWith(input, this.formulaEval(alpha));
   }
 
-  /**
-   * Default `parse` with an empty assignment.  Variables will be unbound
-   * (branches containing them are dropped), so only variable-free formulas
-   * (⊤, ⊥, and combinations thereof) produce results.
-   */
+  /** Default `parse` with an empty assignment (only variable-free formulas produce results). */
   override parse(input: string): Set<boolean> {
     return this.parseWith(input, {});
   }
@@ -435,71 +337,47 @@ export class PropTruth
 
   @rule
   formulaEval(alpha: Record<string, boolean>): Parser<boolean> {
-    return this.or(
-      this.seq(
-        this.orEval(alpha),
-        this.ws,
-        this.arrow,
-        this.ws,
-        this.formulaEval(alpha),
-      )
-        .map(([l, , , , r]) => this.imp(l, r)),
+    return or(
+      this.sseq(this.orEval(alpha), this.arrow, this.formulaEval(alpha))
+        .map(([l, , r]) => this.imp(l, r)),
       this.orEval(alpha),
     );
   }
 
   @rule
   protected orEval(alpha: Record<string, boolean>): Parser<boolean> {
-    return this.or(
-      this.seq(
-        this.orEval(alpha),
-        this.ws,
-        this.orSym,
-        this.ws,
-        this.andEval(alpha),
-      )
-        .map(([l, , , , r]) => this.or_(l, r)),
+    return or(
+      this.sseq(this.orEval(alpha), this.orSym, this.andEval(alpha))
+        .map(([l, , r]) => this.or_(l, r)),
       this.andEval(alpha),
     );
   }
 
   @rule
   protected andEval(alpha: Record<string, boolean>): Parser<boolean> {
-    return this.or(
-      this.seq(
-        this.andEval(alpha),
-        this.ws,
-        this.andSym,
-        this.ws,
-        this.notEval(alpha),
-      )
-        .map(([l, , , , r]) => this.and_(l, r)),
+    return or(
+      this.sseq(this.andEval(alpha), this.andSym, this.notEval(alpha))
+        .map(([l, , r]) => this.and_(l, r)),
       this.notEval(alpha),
     );
   }
 
   @rule
   protected notEval(alpha: Record<string, boolean>): Parser<boolean> {
-    return this.or(
-      this.seq(this.notSym, this.ws, this.atomEval(alpha))
-        .map(([, , a]) => this.not_(a)),
+    return or(
+      this.sseq(this.notSym, this.atomEval(alpha))
+        .map(([, a]) => this.not_(a)),
       this.atomEval(alpha),
     );
   }
 
   @rule
   protected atomEval(alpha: Record<string, boolean>): Parser<boolean> {
-    return this.or(
-      this.literal("⊤").map(() => this.top()),
-      this.literal("⊥").map(() => this.bot()),
-      this.seq(
-        this.char("("),
-        this.ws,
-        this.formulaEval(alpha),
-        this.ws,
-        this.char(")"),
-      )
-        .map(([, , e]) => this.paren(e)),
+    return or(
+      literal("⊤").map(() => this.top()),
+      literal("⊥").map(() => this.bot()),
+      this.sseq(char("("), this.formulaEval(alpha), char(")"))
+        .map(([, e]) => this.paren(e)),
       this.ident.map((name) => this.var_(name, alpha)),
     );
   }
@@ -510,29 +388,8 @@ export class PropTruth
  * ══════════════════════════════════════════════════════════════════════ */
 
 /**
- * Natural-deduction proof builder.  `Γ` is the set of available hypotheses.
- * A successful parse yields a proof tree — "proofs as parse trees".
- *
- * **Multi-pass (Pattern 1)**: proof search requires backtracking and
- * hypothesis management that goes beyond simple L-attributed threading.
- * The `→Intro` rule must extend `Γ` with the antecedent before searching
- * for a proof of the consequent — but the grammar parses both sides of `→`
- * uniformly.  So `PropProof` extends `PropAST` and runs a separate `prove`
- * function over the formula AST.
- *
- * Key rules:
- *
- *   Γ, A ⊢ proof : B
- *   ─────────────────────  (→Intro)
- *   Γ ⊢ →Intro(proof) : A → B
- *
- *   A ∈ Γ
- *   ───────────  (assumption)
- *   Γ ⊢ assump(A) : A
- *
- * **Note**: This is a *constructive* proof system.  Not all tautologies are
- * provable (e.g. excluded middle requires classical rules).  Unprovable
- * formulas produce an empty result set.
+ * Natural-deduction proof builder.  `Γ` is the set of available hypotheses;
+ * a successful parse yields a proof tree.
  */
 export class PropProof extends PropAST {
   parseWith(input: string, gamma: Set<Formula>): Set<NDProof> {
