@@ -118,7 +118,7 @@ Deno.test("STLCTypeCheck — one-pass typing judgment", async (t) => {
   });
 });
 
-Deno.test("STLCEval — tree-consuming grammar evaluation", async (t) => {
+Deno.test("STLCEval — one-pass grammar evaluation", async (t) => {
   const ev = new STLCEval();
   const empty = ValEnv.empty();
 
@@ -137,7 +137,7 @@ Deno.test("STLCEval — tree-consuming grammar evaluation", async (t) => {
     assertEquals(v, true);
   });
   // Higher-order attribute cases — the closure body is re-parsed under an
-  // extended env via a nested tree-parse (the HOAG mechanism).
+  // extended env via _forward (the higher-order attribute mechanism).
   await t.step("(\\x:Int -> Int. x) (\\y:Int. y) ⇓ closure y", () => {
     const [v] = [...ev.parseWith("(\\x:Int -> Int. x) (\\y:Int. y)", empty)];
     assert(v instanceof Closure);

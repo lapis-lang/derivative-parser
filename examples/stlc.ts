@@ -760,7 +760,7 @@ export class STLCEval
         ty instanceof TVar || ty instanceof TFun,
         "lambda type must be a Type",
       );
-      // Parse the body under a placeholder env (x bound to undefined) so the
+      // Parse the body under a placeholder env (x bound to PLACEHOLDER) so the
       // parse succeeds; capture the span, discard the value.
       const placeholderCtx = this.extendCtx(ctx, param, ty);
       return this.exprProd(placeholderCtx)
