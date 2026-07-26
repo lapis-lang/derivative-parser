@@ -212,9 +212,10 @@ export type Value = Closure | boolean | number;
  * capture. The body is parsed under an env where the parameter is bound to
  * this sentinel, so `varRef` succeeds (the value is never used — only the
  * span is kept). Must be non-null because `ValEnv.lookup` maps `null` to
- * `undefined` (unbound) via `??`.
+ * `undefined` (unbound) via `??`. A unique symbol avoids confusion with any
+ * real `Value`.
  */
-const PLACEHOLDER: Value = 0 as unknown as Value;
+const PLACEHOLDER = Symbol("PLACEHOLDER") as unknown as Value;
 
 /**
  * A closure capturing the body's **input span** (not a pre-evaluated body
@@ -680,12 +681,19 @@ export class STLCEval
     return (ctx as ValEnv).extend(name, PLACEHOLDER);
   }
 
-  /** Lam: `ρ ⊢ λx:τ. body ⇓ ⟨x, τ, bodySpan, ρ⟩`. */
+  /**
+   * Lam: `ρ ⊢ λx:τ. body ⇓ ⟨x, τ, bodySpan, ρ⟩`.
+   *
+   * This method is never called — `lambdaProd` is overridden to capture the
+   * body's span directly. The `@requires(() => false)` contract ensures that
+   * if the base `lambdaProd` were accidentally used, this method would
+   * gracefully produce no result (empty parse forest) rather than throw.
+   */
+  @requires((_self: STLCEval, _param: string, _type: Type, _body: Value) =>
+    false
+  )
   protected lam(_param: string, _type: Type, _body: Value): Value {
-    // `lam` receives the body's *value* under a placeholder env — discarded.
-    // The body's span was captured in the overridden `lambdaProd` below.
-    // This method is not called directly; see `lambdaProd` override.
-    throw new Error("lam should not be called directly; see lambdaProd");
+    return undefined as unknown as Value;
   }
 
   /**
@@ -714,11 +722,23 @@ export class STLCEval
     }
   }
 
-  /** Let: `ρ ⊢ let x:τ = def in body ⇓ v` where `ρ ⊢ def ⇓ v₁`, `ρ ⊢ body[x:=v₁] ⇓ v`. */
+  /**
+   * Let: `ρ ⊢ let x:τ = def in body ⇓ v` where `ρ ⊢ def ⇓ v₁`, `ρ ⊢ body[x:=v₁] ⇓ v`.
+   *
+   * This method is never called — `letProd` is overridden to parse the body
+   * under the real env directly. The `@requires(() => false)` contract ensures
+   * that if the base `letProd` were accidentally used, this method would
+   * gracefully produce no result rather than throw.
+   */
+  @requires((
+    _self: STLCEval,
+    _name: string,
+    _type: Type,
+    _def: Value,
+    _body: Value,
+  ) => false)
   protected let_(_name: string, _type: Type, _def: Value, _body: Value): Value {
-    // `let_` receives the body's value under a placeholder env — discarded.
-    // The body is re-evaluated under the real env in the `letProd` override.
-    throw new Error("let_ should not be called directly; see letProd");
+    return undefined as unknown as Value;
   }
 
   protected varRef(name: string, ctx: unknown): Value {

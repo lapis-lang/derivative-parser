@@ -12,6 +12,7 @@ import {
   ident as identLexeme,
   literal,
   or,
+  requires,
   seq,
   ws as wsLexeme,
   ws1 as ws1Lexeme,
@@ -68,8 +69,8 @@ export class UTLet extends UTTerm {
 
 export type UTValue = UTClosure | number | boolean;
 
-/** Sentinel placeholder for span-capture parses (must be non-null; see ValEnv.lookup). */
-const UT_PLACEHOLDER: UTValue = 0 as unknown as UTValue;
+/** Sentinel placeholder for span-capture parses (must be non-null; see ValEnv.lookup). A unique symbol avoids confusion with real values. */
+const UT_PLACEHOLDER = Symbol("UT_PLACEHOLDER") as unknown as UTValue;
 
 /**
  * A closure capturing the body's **input span** (not a pre-evaluated body).
@@ -280,8 +281,17 @@ export class LambdaEval
     return (ctx as UTValEnv).extend(name, UT_PLACEHOLDER);
   }
 
+  /**
+   * Lam: `ρ ⊢ λx. body ⇓ ⟨x, bodySpan, ρ⟩`.
+   *
+   * This method is never called — `lambdaProd` is overridden to capture the
+   * body's span directly. The `@requires(() => false)` contract ensures that
+   * if the base `lambdaProd` were accidentally used, this method would
+   * gracefully produce no result rather than throw.
+   */
+  @requires((_self: LambdaEval, _param: string, _body: UTValue) => false)
   protected lam(_param: string, _body: UTValue): UTValue {
-    throw new Error("lam should not be called directly; see lambdaProd");
+    return undefined as unknown as UTValue;
   }
 
   protected app(fn: UTValue, arg: UTValue): UTValue {
@@ -304,8 +314,19 @@ export class LambdaEval
     }
   }
 
+  /**
+   * Let: `ρ ⊢ let x = def in body ⇓ v`.
+   *
+   * This method is never called — `letProd` is overridden to parse the body
+   * under the real env directly. The `@requires(() => false)` contract ensures
+   * that if the base `letProd` were accidentally used, this method would
+   * gracefully produce no result rather than throw.
+   */
+  @requires((_self: LambdaEval, _name: string, _def: UTValue, _body: UTValue) =>
+    false
+  )
   protected let_(_name: string, _def: UTValue, _body: UTValue): UTValue {
-    throw new Error("let_ should not be called directly; see letProd");
+    return undefined as unknown as UTValue;
   }
 
   protected varRef(name: string, ctx: unknown): UTValue {

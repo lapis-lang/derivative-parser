@@ -198,6 +198,10 @@ export abstract class Grammar<S extends GrammarShape = GrammarShape> {
    * resulting parse forest. Per-pass memo isolation ensures the nested driver
    * does not leak state into the outer parse.
    *
+   * Returns the full parse forest (a `Set<T>`); callers typically take the
+   * first result for deterministic evaluation. If the substring is ambiguous,
+   * only the first parse is used.
+   *
    * This lets an evaluator be a single grammar class extending the abstract
    * grammar (like a type checker), with no intermediate AST — the
    * higher-order step (re-evaluating a closure body) re-parses the original
