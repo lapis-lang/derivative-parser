@@ -20,7 +20,7 @@ import {
   PredTokExp,
   SeqExp,
   TokExp,
-} from "./zipper/zipper.ts";
+} from "./zipper.ts";
 import { Parser } from "./Parser.ts";
 import type { Diagnostic } from "./Grammar.ts";
 

@@ -17,7 +17,7 @@ import {
   ws as wsLexeme,
   ws1 as ws1Lexeme,
 } from "../src/index.ts";
-import type { Parser } from "../src/index.ts";
+import type { Parser, Span } from "../src/index.ts";
 import { assert, ensures, invariant, requires } from "../src/index.ts";
 
 /* ======================================================================
@@ -207,12 +207,28 @@ export class TypedInt extends TypedTerm {
 
 export type Value = Closure | boolean | number;
 
+/**
+ * Sentinel placeholder value used when parsing a lambda body for span
+ * capture. The body is parsed under an env where the parameter is bound to
+ * this sentinel, so `varRef` succeeds (the value is never used — only the
+ * span is kept). Must be non-null because `ValEnv.lookup` maps `null` to
+ * `undefined` (unbound) via `??`. A unique symbol avoids confusion with any
+ * real `Value`.
+ */
+const PLACEHOLDER = Symbol("PLACEHOLDER") as unknown as Value;
+
+/**
+ * A closure capturing the body's **input span** (not a pre-evaluated body
+ * value). The body is re-evaluated on demand by re-parsing its source
+ * substring under the extended environment — the higher-order attribute
+ * mechanism for one-pass evaluation.
+ */
 export class Closure {
   constructor(
     readonly param: string,
     readonly type: Type,
-    readonly body: unknown, // The body parser's result type varies per interpretation
-    readonly env: unknown, // The env type varies per interpretation
+    readonly bodySpan: Span,
+    readonly env: ValEnv,
   ) {}
 }
 
@@ -282,29 +298,64 @@ export interface STLCShape {
  * ====================================================================== */
 
 /**
- * Abstract STLC grammar.  `ctx` is inherited context (TypeEnv, ValEnv, or
- * null).  `chain` threads synthesized values into inherited context.
+ * Base STLC grammar — productions, lexemes, and context threading.
+ *
+ * `ctx` is inherited context (TypeEnv, ValEnv, or null).  `chain` threads
+ * synthesized values into inherited context.
+ *
+ * The semantic-action methods (`lam`, `app`, `let_`, `varRef`, `boolLit`,
+ * `intLit`, `paren`) have **throwing default implementations**. They are
+ * reachable only via the base `lambdaProd`/`letProd`/`appProd`/`atomProd`
+ * productions. Subclasses that **override productions** (like `STLCEval`)
+ * extend this class directly and never call the actions. Subclasses that
+ * **override actions** (like `STLCAST`, `STLCTypeCheck`) extend
+ * {@link AbstractSTLCActions}, which re-declares the actions as abstract for
+ * compile-time safety.
  */
 @invariant((self: AbstractSTLC<STLCShape>) => self.start() !== undefined)
 export abstract class AbstractSTLC<S extends STLCShape> extends Grammar<S> {
-  /* ── semantic actions ────────────────────────────────────────────── */
+  /* ── semantic actions (throwing defaults — overridden by action subclasses) ── */
 
-  protected abstract lam(
-    param: string,
-    type: Type,
-    body: S["expr"],
-  ): S["expr"];
-  protected abstract app(fn: S["atom"], arg: S["atom"]): S["expr"];
-  protected abstract let_(
-    name: string,
-    type: Type,
-    def: S["expr"],
-    body: S["expr"],
-  ): S["expr"];
-  protected abstract varRef(name: string, ctx: unknown): S["atom"];
-  protected abstract boolLit(b: boolean): S["atom"];
-  protected abstract intLit(n: number): S["atom"];
-  protected abstract paren(e: S["expr"]): S["atom"];
+  protected lam(_param: string, _type: Type, _body: S["expr"]): S["expr"] {
+    throw new Error(
+      "lam() unreachable — override the action or the production",
+    );
+  }
+  protected app(_fn: S["atom"], _arg: S["atom"]): S["expr"] {
+    throw new Error(
+      "app() unreachable — override the action or the production",
+    );
+  }
+  protected let_(
+    _name: string,
+    _type: Type,
+    _def: S["expr"],
+    _body: S["expr"],
+  ): S["expr"] {
+    throw new Error(
+      "let_() unreachable — override the action or the production",
+    );
+  }
+  protected varRef(_name: string, _ctx: unknown): S["atom"] {
+    throw new Error(
+      "varRef() unreachable — override the action or the production",
+    );
+  }
+  protected boolLit(_b: boolean): S["atom"] {
+    throw new Error(
+      "boolLit() unreachable — override the action or the production",
+    );
+  }
+  protected intLit(_n: number): S["atom"] {
+    throw new Error(
+      "intLit() unreachable — override the action or the production",
+    );
+  }
+  protected paren(_e: S["expr"]): S["atom"] {
+    throw new Error(
+      "paren() unreachable — override the action or the production",
+    );
+  }
 
   /* ── type production (shared — always returns Type) ──────────────── */
 
@@ -486,12 +537,41 @@ export abstract class AbstractSTLC<S extends STLCShape> extends Grammar<S> {
   }
 }
 
+/**
+ * Action layer — re-declares the semantic actions as abstract for
+ * compile-time safety. Subclasses that **override actions** (not
+ * productions) extend this class: `STLCAST`, `STLCTypeCheck`, `STLCTyped`.
+ * They must implement every action, and the base productions call them.
+ *
+ * Subclasses that **override productions** (like `STLCEval`) extend
+ * {@link AbstractSTLC} directly, bypassing the actions entirely.
+ */
+export abstract class AbstractSTLCActions<S extends STLCShape>
+  extends AbstractSTLC<S> {
+  protected abstract override lam(
+    param: string,
+    type: Type,
+    body: S["expr"],
+  ): S["expr"];
+  protected abstract override app(fn: S["atom"], arg: S["atom"]): S["expr"];
+  protected abstract override let_(
+    name: string,
+    type: Type,
+    def: S["expr"],
+    body: S["expr"],
+  ): S["expr"];
+  protected abstract override varRef(name: string, ctx: unknown): S["atom"];
+  protected abstract override boolLit(b: boolean): S["atom"];
+  protected abstract override intLit(n: number): S["atom"];
+  protected abstract override paren(e: S["expr"]): S["atom"];
+}
+
 /* ======================================================================
  *  Concrete: AST builder (no context)
  * ====================================================================== */
 
 export class STLCAST
-  extends AbstractSTLC<{ expr: Term; atom: Term; type: Type }> {
+  extends AbstractSTLCActions<{ expr: Term; atom: Term; type: Type }> {
   override start(): Parser<Term> {
     return this.exprProd(null);
   }
@@ -528,7 +608,7 @@ export class STLCAST
  * Ill-typed terms produce an empty parse forest.
  */
 export class STLCTypeCheck
-  extends AbstractSTLC<{ expr: Type; atom: Type; type: Type }> {
+  extends AbstractSTLCActions<{ expr: Type; atom: Type; type: Type }> {
   parseWith(input: string, env: TypeEnv): Set<Type> {
     return this._parseWith(input, this.exprProd(env));
   }
@@ -611,55 +691,179 @@ export class STLCTypeCheck
 }
 
 /* ======================================================================
- *  Concrete: evaluator  — `expr(ρ): Parser<Value>`
+ *  Concrete: evaluator  — `expr(ρ): Parser<Value>`  (one-pass grammar)
  * ====================================================================== */
 
 /**
- * Multi-pass evaluator.  Extends `STLCAST`; parses to AST via `super`,
- * then evaluates with `evalTerm`.
+ * One-pass evaluator — the same shape as `STLCTypeCheck`. Extends
+ * `AbstractSTLC` directly; no intermediate AST, no separate recursive
+ * function. The evaluation judgment `ρ ⊢ e ⇓ v` is a parameterised
+ * production, with `ρ` (`ValEnv`) threaded as inherited context via `chain`.
+ *
+ * The higher-order step — applying a closure to an argument — is realised
+ * by capturing the body's **input span** in the closure and re-parsing that
+ * substring under the extended environment via `_forward`. This is a
+ * higher-order attribute: a semantic action that re-enters the engine over a
+ * fragment of the original input. Per-pass memo isolation makes the
+ * nested re-entry safe.
  */
-export class STLCEval extends STLCAST {
+export class STLCEval
+  extends AbstractSTLC<{ expr: Value; atom: Value; type: Type }> {
+  /** The source text, stored so semantic actions can re-parse substrings. */
+  private _input: string = "";
   /**
-   * Parse to AST (via `super`) then evaluate under `env`.
-   * The grammar builds the AST; `evalTerm` is the evaluation judgment.
+   * Base offset of the current parse relative to `_input`. The outer parse
+   * starts at 0; a nested `_forward` re-parse of a substring starting at
+   * offset `S` sets this to `S`, so spans captured inside the re-parse are
+   * absolute (relative to the original `_input`), not relative to the
+   * substring. This lets closures captured during a re-parse be applied
+   * later against the original input.
    */
-  parseWith(input: string, env: ValEnv): Set<Value> {
-    const asts = [...this._parseWith(input, this.start())];
-    const results = new Set<Value>();
-    for (const ast of asts) {
-      try {
-        results.add(evalTerm(ast as Term, env));
-      } catch {
-        // ill-typed or stuck term — skip
-      }
-    }
-    return results;
-  }
-}
+  private _inputOffset: number = 0;
 
-/** Call-by-value evaluation judgment `ρ ⊢ e ⇓ v` as a syntax-directed recursive function. */
-export function evalTerm(term: Term, env: ValEnv): Value {
-  if (term instanceof Var) {
-    const v = env.lookup(term.name);
-    if (v === undefined) throw new Error(`unbound variable: ${term.name}`);
+  parseWith(input: string, env: ValEnv): Set<Value> {
+    this._input = input;
+    this._inputOffset = 0;
+    return this._parseWith(input, this.exprProd(env));
+  }
+
+  override start(): Parser<Value> {
+    return this.exprProd(ValEnv.empty());
+  }
+
+  protected override extendCtx(
+    ctx: unknown,
+    name: string,
+    _type: Type,
+  ): unknown {
+    // For evaluation, ctx is ValEnv. Bind the name to a placeholder so the
+    // body parses (the placeholder value is never used — only the span is
+    // captured). The real binding happens when the closure is applied.
+    // Use a unique sentinel object — `ValEnv.lookup` returns `undefined`
+    // for `null` values (`value ?? undefined`), so `null` would be treated
+    // as unbound. A non-null sentinel avoids that.
+    return (ctx as ValEnv).extend(name, PLACEHOLDER);
+  }
+
+  /**
+   * App: `ρ ⊢ e₁ e₂ ⇓ v` where `ρ ⊢ e₁ ⇓ ⟨x,τ,span,ρ'⟩`, `ρ ⊢ e₂ ⇓ v₂`,
+   * and `ρ' ⊢ body[x:=v₂] ⇓ v`.  The body re-evaluation re-parses the
+   * closure's body substring under `ρ'.extend(x, v₂)` — the higher-order
+   * attribute.
+   */
+  protected override app(fn: Value, arg: Value): Value {
+    if (!(fn instanceof Closure)) throw new Error(`cannot apply non-function`);
+    const bodyEnv = fn.env.extend(fn.param, arg);
+    // Re-parse the body substring under bodyEnv. Save/restore _inputOffset
+    // so spans captured inside the re-parse are absolute (relative to _input).
+    const savedOffset = this._inputOffset;
+    this._inputOffset = fn.bodySpan.start;
+    try {
+      const results = [...this._forward(
+        this._input,
+        fn.bodySpan,
+        this.exprProd(bodyEnv),
+      )];
+      if (results.length === 0) throw new Error(`stuck application`);
+      return results[0]!;
+    } finally {
+      this._inputOffset = savedOffset;
+    }
+  }
+
+  protected override varRef(name: string, ctx: unknown): Value {
+    const v = (ctx as ValEnv).lookup(name);
+    if (v === undefined) throw new Error(`unbound variable: ${name}`);
     return v;
   }
-  if (term instanceof Lam) {
-    return new Closure(term.param, term.type, term.body, env);
+  protected override boolLit(b: boolean): Value {
+    return b;
   }
-  if (term instanceof App) {
-    const fn = evalTerm(term.fn, env);
-    const arg = evalTerm(term.arg, env);
-    if (!(fn instanceof Closure)) throw new Error(`cannot apply non-function`);
-    return evalTerm(fn.body as Term, (fn.env as ValEnv).extend(fn.param, arg));
+  protected override intLit(n: number): Value {
+    return n;
   }
-  if (term instanceof Let) {
-    const defVal = evalTerm(term.def, env);
-    return evalTerm(term.body, env.extend(term.name, defVal));
+  protected override paren(e: Value): Value {
+    return e;
   }
-  if (term instanceof BoolLit) return term.value;
-  if (term instanceof IntLit) return term.value;
-  throw new Error(`unknown term`);
+
+  /**
+   * Override `lambdaProd` to capture the body's input span in a closure
+   * instead of evaluating the body. The body is parsed under a placeholder
+   * env (so `x` is bound and the parse succeeds), but only the **span** is
+   * kept — the body's value is discarded. The real evaluation happens when
+   * the closure is applied (`app` re-parses the substring).
+   */
+  @rule
+  protected override lambdaProd(ctx: unknown): Parser<Value> {
+    return seq(
+      this.sseq(
+        this.lambdaHead,
+        this.ident,
+        char(":"),
+        this.type,
+        char("."),
+      ),
+      this.ws,
+    ).chain(([[, param, , ty]]) => {
+      assert(typeof param === "string", "lambda param must be a string");
+      assert(
+        ty instanceof TVar || ty instanceof TFun,
+        "lambda type must be a Type",
+      );
+      // Parse the body under a placeholder env (x bound to PLACEHOLDER) so the
+      // parse succeeds; capture the span, discard the value.
+      const placeholderCtx = this.extendCtx(ctx, param, ty);
+      return this.exprProd(placeholderCtx)
+        .map((_body, span) =>
+          new Closure(
+            param,
+            ty,
+            {
+              start: span.start + this._inputOffset,
+              end: span.end + this._inputOffset,
+            },
+            ctx as ValEnv,
+          )
+        );
+    }).map(([, result]) => result);
+  }
+
+  /**
+   * Override `letProd` to parse the body under the real env (extended with
+   * def's value). Unlike `lambdaProd`, the body is evaluated in the same
+   * pass — `def`'s value is available from the `chain`, so the body parser
+   * runs under `ρ[name:=def]` directly. No span capture or `_forward` needed.
+   */
+  @rule
+  protected override letProd(ctx: unknown): Parser<Value> {
+    return seq(
+      literal("let"),
+      this.ws1,
+      this.ident,
+      this.ws,
+      char(":"),
+      this.ws,
+      this.type,
+      this.ws,
+      char("="),
+      this.ws,
+    ).chain(([, , name]) =>
+      // Parse def under the outer ctx.
+      this.exprProd(ctx)
+        .map((def) => ({ name, def }))
+        .chain(({ name, def }) =>
+          seq(this.ws1, literal("in"), this.ws1)
+            .chain(() => {
+              // Body parsed under ρ[name:=def] — same pass, no re-parse.
+              const bodyCtx = (ctx as ValEnv).extend(name, def);
+              return this.exprProd(bodyCtx)
+                .map((body) => body);
+            })
+            .map(([, result]) => result)
+        )
+        .map(([, result]) => result)
+    ).map(([, result]) => result);
+  }
 }
 
 /* ======================================================================
@@ -667,8 +871,9 @@ export function evalTerm(term: Term, env: ValEnv): Value {
  * ====================================================================== */
 
 /** Proof-bearing type checker — returns `TypedTerm` carrying derived types and sub-derivations. */
-export class STLCTyped
-  extends AbstractSTLC<{ expr: TypedTerm; atom: TypedTerm; type: Type }> {
+export class STLCTyped extends AbstractSTLCActions<
+  { expr: TypedTerm; atom: TypedTerm; type: Type }
+> {
   parseWith(input: string, env: TypeEnv): Set<TypedTerm> {
     return this._parseWith(input, this.exprProd(env));
   }

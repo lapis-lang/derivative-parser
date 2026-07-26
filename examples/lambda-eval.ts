@@ -1,6 +1,7 @@
 /**
- * Untyped lambda calculus — AST builder + call-by-value evaluator.
- * Multi-pass: grammar builds AST, then `evalTerm` evaluates it.
+ * Untyped lambda calculus — AST builder + one-pass evaluator.
+ * The evaluator is a grammar subclass (like the type checker), with no
+ * separate recursive function.
  */
 
 import { Grammar, rule } from "../src/index.ts";
@@ -15,7 +16,7 @@ import {
   ws as wsLexeme,
   ws1 as ws1Lexeme,
 } from "../src/index.ts";
-import type { Parser } from "../src/index.ts";
+import type { Parser, Span } from "../src/index.ts";
 
 /* ─── AST ────────────────────────────────────────────────────────────── */
 
@@ -67,10 +68,19 @@ export class UTLet extends UTTerm {
 
 export type UTValue = UTClosure | number | boolean;
 
+/** Sentinel placeholder for span-capture parses (must be non-null; see ValEnv.lookup). A unique symbol avoids confusion with real values. */
+const UT_PLACEHOLDER = Symbol("UT_PLACEHOLDER") as unknown as UTValue;
+
+/**
+ * A closure capturing the body's **input span** (not a pre-evaluated body).
+ * The body is re-evaluated on demand by re-parsing its source substring under
+ * the extended environment — the higher-order attribute mechanism for
+ * one-pass evaluation.
+ */
 export class UTClosure {
   constructor(
     readonly param: string,
-    readonly body: UTTerm,
+    readonly bodySpan: Span,
     readonly env: UTValEnv,
   ) {}
 }
@@ -106,30 +116,62 @@ export interface LambdaShape {
   atom: unknown;
 }
 
+/**
+ * Base lambda grammar — productions, lexemes, and context threading.
+ *
+ * The semantic-action methods (`lam`, `app`, `let_`, `varRef`, `paren`) have
+ * **throwing default implementations**. They are reachable only via the base
+ * `lambdaProd`/`letProd`/`appProd`/`atomProd` productions. Subclasses that
+ * **override productions** (like `LambdaEval`) extend this class directly and
+ * never call the actions. Subclasses that **override actions** (like
+ * `LambdaAST`) extend {@link AbstractLambdaActions}, which re-declares the
+ * actions as abstract for compile-time safety.
+ */
 export abstract class AbstractLambda<S extends LambdaShape> extends Grammar<S> {
-  protected abstract lam(param: string, body: S["expr"]): S["expr"];
-  protected abstract app(fn: S["atom"], arg: S["atom"]): S["expr"];
-  protected abstract let_(
-    name: string,
-    def: S["expr"],
-    body: S["expr"],
-  ): S["expr"];
-  protected abstract varRef(name: string): S["atom"];
-  protected abstract paren(e: S["expr"]): S["atom"];
+  /* ── semantic actions (throwing defaults — overridden by action subclasses) ── */
 
-  override start(): Parser<S["expr"]> {
-    return this.exprProd;
+  protected lam(_param: string, _body: S["expr"]): S["expr"] {
+    throw new Error(
+      "lam() unreachable — override the action or the production",
+    );
+  }
+  protected app(_fn: S["atom"], _arg: S["atom"]): S["expr"] {
+    throw new Error(
+      "app() unreachable — override the action or the production",
+    );
+  }
+  protected let_(
+    _name: string,
+    _def: S["expr"],
+    _body: S["expr"],
+  ): S["expr"] {
+    throw new Error(
+      "let_() unreachable — override the action or the production",
+    );
+  }
+  protected varRef(_name: string, _ctx: unknown): S["atom"] {
+    throw new Error(
+      "varRef() unreachable — override the action or the production",
+    );
+  }
+  protected paren(_e: S["expr"]): S["atom"] {
+    throw new Error(
+      "paren() unreachable — override the action or the production",
+    );
+  }
+
+  /** Context extension hook — default no-op (for `LambdaAST`). Semantic subclasses override. */
+  protected extendCtx(ctx: unknown, _name: string): unknown {
+    return ctx;
   }
 
   @rule
-  get exprProd(): Parser<S["expr"]> {
-    return or(this.letProd, this.lambdaProd, this.appProd);
+  exprProd(ctx: unknown): Parser<S["expr"]> {
+    return or(this.letProd(ctx), this.lambdaProd(ctx), this.appProd(ctx));
   }
 
   @rule
-  protected get letProd(): Parser<S["expr"]> {
-    // `ws1` is used explicitly where at least one space is required (after
-    // keywords, before the body); `ws` (zero-or-more) suffices elsewhere.
+  protected letProd(ctx: unknown): Parser<S["expr"]> {
     return seq(
       literal("let"),
       this.ws1,
@@ -137,42 +179,50 @@ export abstract class AbstractLambda<S extends LambdaShape> extends Grammar<S> {
       this.ws,
       char("="),
       this.ws,
-      this.exprProd,
-      this.ws1,
-      literal("in"),
-      this.ws1,
-      this.exprProd,
-    ).map(([, , name, , , , def, , , , body]) => this.let_(name, def, body));
+    ).chain(([, , name]) =>
+      // Parse def under outer ctx.
+      this.exprProd(ctx)
+        .map((def) => ({ name, def }))
+        .chain(({ name, def }) =>
+          seq(this.ws1, literal("in"), this.ws1)
+            .chain(() =>
+              this.exprProd(this.extendCtx(ctx, name))
+                .map((body) => this.let_(name, def, body))
+            )
+            .map(([, result]) => result)
+        )
+        .map(([, result]) => result)
+    ).map(([, result]) => result);
   }
 
   @rule
-  protected get lambdaProd(): Parser<S["expr"]> {
-    // `sseq` auto-inserts `ws` (zero-or-more) between terms — no manual
-    // `this.ws` threading needed between the head, param, dot, and body.
+  protected lambdaProd(ctx: unknown): Parser<S["expr"]> {
     return this.sseq(
       this.lambdaHead,
       this.ident,
       char("."),
-      this.exprProd,
-    ).map(([, param, , body]) => this.lam(param, body));
-  }
-
-  @rule
-  protected get appProd(): Parser<S["expr"]> {
-    return or(
-      seq(this.appProd, this.ws1, this.atomProd)
-        .map(([fn, , arg]) => this.app(fn, arg)),
-      this.atomProd as Parser<S["expr"]>,
+    ).chain(([, param]) =>
+      this.exprProd(this.extendCtx(ctx, param))
+        .map((body) => this.lam(param, body))
     );
   }
 
   @rule
-  protected get atomProd(): Parser<S["atom"]> {
+  protected appProd(ctx: unknown): Parser<S["expr"]> {
+    return or(
+      seq(this.appProd(ctx), this.ws1, this.atomProd(ctx))
+        .map(([fn, , arg]) => this.app(fn, arg)),
+      this.atomProd(ctx) as Parser<S["expr"]>,
+    );
+  }
+
+  @rule
+  protected atomProd(ctx: unknown): Parser<S["atom"]> {
     // `sseq` auto-inserts `ws` between terms — no manual `this.ws` threading.
     return or(
-      this.sseq(char("("), this.exprProd, char(")"))
+      this.sseq(char("("), this.exprProd(ctx), char(")"))
         .map(([, e]) => this.paren(e)),
-      this.ident.map((name) => this.varRef(name)),
+      this.ident.map((name) => this.varRef(name, ctx)),
     );
   }
 
@@ -205,9 +255,36 @@ export abstract class AbstractLambda<S extends LambdaShape> extends Grammar<S> {
   }
 }
 
+/**
+ * Action layer — re-declares the semantic actions as abstract for
+ * compile-time safety. Subclasses that **override actions** (not
+ * productions) extend this class: `LambdaAST`. They must implement every
+ * action, and the base productions call them.
+ *
+ * Subclasses that **override productions** (like `LambdaEval`) extend
+ * {@link AbstractLambda} directly, bypassing the actions entirely.
+ */
+export abstract class AbstractLambdaActions<S extends LambdaShape>
+  extends AbstractLambda<S> {
+  protected abstract override lam(param: string, body: S["expr"]): S["expr"];
+  protected abstract override app(fn: S["atom"], arg: S["atom"]): S["expr"];
+  protected abstract override let_(
+    name: string,
+    def: S["expr"],
+    body: S["expr"],
+  ): S["expr"];
+  protected abstract override varRef(name: string, ctx: unknown): S["atom"];
+  protected abstract override paren(e: S["expr"]): S["atom"];
+}
+
 /* ─── Concrete: AST builder ──────────────────────────────────────────── */
 
-export class LambdaAST extends AbstractLambda<{ expr: UTTerm; atom: UTTerm }> {
+export class LambdaAST
+  extends AbstractLambdaActions<{ expr: UTTerm; atom: UTTerm }> {
+  override start(): Parser<UTTerm> {
+    return this.exprProd(null);
+  }
+
   protected lam(param: string, body: UTTerm): UTTerm {
     return new UTLam(param, body);
   }
@@ -217,7 +294,7 @@ export class LambdaAST extends AbstractLambda<{ expr: UTTerm; atom: UTTerm }> {
   protected let_(name: string, def: UTTerm, body: UTTerm): UTTerm {
     return new UTLet(name, def, body);
   }
-  protected varRef(name: string): UTTerm {
+  protected varRef(name: string, _ctx: unknown): UTTerm {
     return new UTVar(name);
   }
   protected paren(e: UTTerm): UTTerm {
@@ -225,45 +302,116 @@ export class LambdaAST extends AbstractLambda<{ expr: UTTerm; atom: UTTerm }> {
   }
 }
 
-/* ─── Evaluator (multi-pass) ─────────────────────────────────────────── */
+/* ─── Evaluator (one-pass grammar) ───────────────────────────────────── */
 
-/** Call-by-value evaluation judgment `ρ ⊢ e ⇓ v` as a syntax-directed recursive function. */
-export function lambdaEval(term: UTTerm, env: UTValEnv): UTValue {
-  if (term instanceof UTVar) {
-    const v = env.lookup(term.name);
-    if (v === undefined) throw new Error(`unbound variable: ${term.name}`);
-    return v;
+/**
+ * One-pass evaluator — the same shape as the AST builder but with overridden
+ * semantic actions. Extends `AbstractLambda` directly; no intermediate AST,
+ * no separate recursive function. The evaluation judgment `ρ ⊢ e ⇓ v` is a
+ * parameterised production, with `ρ` (`UTValEnv`) threaded as inherited
+ * context via `chain`.
+ *
+ * The higher-order step — applying a closure to an argument — is realised
+ * by capturing the body's **input span** in the closure and re-parsing that
+ * substring under the extended environment via `_forward`. Per-pass memo
+ * isolation makes the nested re-entry safe.
+ */
+export class LambdaEval
+  extends AbstractLambda<{ expr: UTValue; atom: UTValue }> {
+  private _input: string = "";
+  private _inputOffset: number = 0;
+
+  parseWith(input: string, env: UTValEnv): Set<UTValue> {
+    this._input = input;
+    this._inputOffset = 0;
+    return this._parseWith(input, this.exprProd(env));
   }
-  if (term instanceof UTLam) {
-    return new UTClosure(term.param, term.body, env);
+
+  override start(): Parser<UTValue> {
+    return this.exprProd(UTValEnv.empty());
   }
-  if (term instanceof UTApp) {
-    const fn = lambdaEval(term.fn, env);
-    const arg = lambdaEval(term.arg, env);
+
+  protected override extendCtx(ctx: unknown, name: string): unknown {
+    // Bind name to a placeholder so the body parses (span capture only).
+    return (ctx as UTValEnv).extend(name, UT_PLACEHOLDER);
+  }
+
+  protected override app(fn: UTValue, arg: UTValue): UTValue {
     if (!(fn instanceof UTClosure)) {
       throw new Error(`cannot apply non-function`);
     }
-    return lambdaEval(fn.body, fn.env.extend(fn.param, arg));
-  }
-  if (term instanceof UTLet) {
-    const defVal = lambdaEval(term.def, env);
-    return lambdaEval(term.body, env.extend(term.name, defVal));
-  }
-  throw new Error(`unknown term`);
-}
-
-/** Multi-pass evaluator: parses to AST via `super`, then evaluates with `lambdaEval`. */
-export class LambdaEval extends LambdaAST {
-  parseWith(input: string, env: UTValEnv): Set<UTValue> {
-    const asts = [...this._parseWith(input, this.start())];
-    const results = new Set<UTValue>();
-    for (const ast of asts) {
-      try {
-        results.add(lambdaEval(ast, env));
-      } catch {
-        // stuck term — skip
-      }
+    const bodyEnv = fn.env.extend(fn.param, arg);
+    const savedOffset = this._inputOffset;
+    this._inputOffset = fn.bodySpan.start;
+    try {
+      const results = [...this._forward(
+        this._input,
+        fn.bodySpan,
+        this.exprProd(bodyEnv),
+      )];
+      if (results.length === 0) throw new Error(`stuck application`);
+      return results[0]!;
+    } finally {
+      this._inputOffset = savedOffset;
     }
-    return results;
+  }
+
+  protected override varRef(name: string, ctx: unknown): UTValue {
+    const v = (ctx as UTValEnv).lookup(name);
+    if (v === undefined) throw new Error(`unbound variable: ${name}`);
+    return v;
+  }
+
+  protected override paren(e: UTValue): UTValue {
+    return e;
+  }
+
+  /** Override `lambdaProd` to capture the body's span in a closure. */
+  @rule
+  protected override lambdaProd(ctx: unknown): Parser<UTValue> {
+    return this.sseq(
+      this.lambdaHead,
+      this.ident,
+      char("."),
+    ).chain(([, param]) => {
+      const placeholderCtx = this.extendCtx(ctx, param);
+      return this.exprProd(placeholderCtx)
+        .map((_body, span) =>
+          new UTClosure(
+            param,
+            {
+              start: span.start + this._inputOffset,
+              end: span.end + this._inputOffset,
+            },
+            ctx as UTValEnv,
+          )
+        );
+    }).map(([, result]) => result);
+  }
+
+  /** Override `letProd` to parse the body under the real env (with def's value). */
+  @rule
+  protected override letProd(ctx: unknown): Parser<UTValue> {
+    return seq(
+      literal("let"),
+      this.ws1,
+      this.ident,
+      this.ws,
+      char("="),
+      this.ws,
+    ).chain(([, , name]) =>
+      this.exprProd(ctx)
+        .map((def) => ({ name, def }))
+        .chain(({ name, def }) =>
+          seq(this.ws1, literal("in"), this.ws1)
+            .chain(() => {
+              const bodyCtx = (ctx as UTValEnv).extend(name, def);
+              return this.exprProd(bodyCtx)
+                .map((body) => body);
+            })
+            .map(([, result]) => result)
+        )
+        .map(([, result]) => result)
+    ).map(([, result]) => result);
   }
 }

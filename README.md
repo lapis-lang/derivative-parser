@@ -131,41 +131,90 @@ A typing judgment `Γ ⊢ e : τ` can be encoded as a parameterised production
 `expr(ρ): Parser<Value>`.  The grammar is no longer merely recognising
 syntax — it is *deriving judgments*.
 
-This connection is well-known in the attribute-grammar tradition:
+This is [**syntax-directed translation**](https://en.wikipedia.org/wiki/Syntax-directed_translation):
+each production carries a semantic rule that computes a value from its
+children's values.  Attribute grammars are the formal foundation; this
+library encodes them as grammar-class methods.
 
-| Attribute grammar concept       | This library                              |
-| ------------------------------- | ----------------------------------------- |
-| Inherited attributes (top-down) | `@rule expr(Γ)` method arguments          |
-| Synthesized attributes (bottom-up) | `.map((val, span) => ...)`             |
-| Two-phase evaluation            | `super.expr.map(evalFn)` (multi-pass)     |
-| L-attributed one-pass            | `chain(first, fn)` — monadic bind          |
+### From textbook attribute grammars to executable grammars
 
-An inference rule has **premises** (above the line) and a **conclusion**
-(below the line). This library lets you encode both directly: the premises
-as `@requires` on the semantic action, the conclusion as `@ensures`, and
-the rule's body as the method itself — see [Grammar-native contracts](#grammar-native-contracts) below.
+A textbook attribute grammar attaches **semantic rules** to productions in
+square brackets.  For example, arithmetic evaluation:
 
-### Two patterns for semantics
+```
+Expr1 → Expr2 + Term   [ Expr1.value = Expr2.value + Term.value ]
+Expr  → Term           [ Expr.value  = Term.value ]
+Term1 → Term2 * Factor [ Term1.value = Term2.value * Factor.value ]
+Term  → Factor         [ Term.value  = Factor.value ]
+Factor → "(" Expr ")"  [ Factor.value = Expr.value ]
+Factor → integer       [ Factor.value = strToInt(integer.str) ]
+```
 
-**Pattern 1 — multi-pass via `super`**: a subclass calls
-`super.expr.map(evalFn)` where `evalFn` is a separate recursive function over
-the AST.  Open recursion (OOP subclassing) gives pass composition for free —
-the class hierarchy *is* the compiler pipeline.  Use when the context depends
-on a *synthesized* attribute (e.g. `let x = def in body` needs `def`'s value
-before evaluating `body`).
+Each `.value` is a **synthesized attribute** — computed bottom-up from
+children.  In this library, the same grammar is an executable grammar class
+where each production is a `@rule` method and the semantic rule is a `.map()`
+callback:
 
-**Pattern 2 — one-pass judgments-as-productions**: restructure productions
-with a context parameter `@rule expr(Γ): Parser<Type>`.  Use when context
-extensions are *syntactic* — e.g. `λx:τ.body` extends `Γ` with `x:τ` where `τ`
-is an annotation parsed *before* the body.
+```ts
+class MathEval extends Grammar<MathShape> {
+    @rule get expr(): Parser<number> {
+        return or(
+            seq(this.term, char('+'), this.expr).map(([t, , e]) => t + e),  // Expr1 → Expr2 + Term
+            this.term,                                                       // Expr → Term
+        );
+    }
+    @rule get term(): Parser<number> {
+        return or(
+            seq(this.factor, char('*'), this.term).map(([f, , t]) => f * t), // Term1 → Term2 * Factor
+            this.factor,                                                     // Term → Factor
+        );
+    }
+    @rule get factor(): Parser<number> {
+        return or(
+            seq(char('('), this.expr, char(')')).map(([, e]) => e),         // Factor → "(" Expr ")"
+            this.intLiteral.map((s) => Number(s)),                           // Factor → integer
+        );
+    }
+}
+```
+
+The correspondence is direct:
+
+| Textbook attribute grammar       | This library                              |
+| -------------------------------- | ----------------------------------------- |
+| Production `A → B C`             | `@rule` method returning `Parser<T>`      |
+| Synthesized attribute `A.value` | `.map(([b, c]) => ...)` — the method's return value |
+| Inherited attribute (top-down)   | `@rule expr(Γ)` method argument           |
+| Semantic rule in `[ brackets ]`  | `.map()` callback                          |
+| L-attributed (one-pass)          | `chain(first, fn)` — monadic bind           |
+| Two-phase evaluation             | `super.expr.map(evalFn)` (multi-pass)       |
+
+See [examples/arith.ts](examples/arith.ts) for the full arithmetic evaluator.
+
+### Inherited vs. synthesized attributes
+
+The textbook example above uses only **synthesized** attributes — each
+node's value is computed from its children's values, flowing bottom-up.
+Many languages also need **inherited** attributes — values that flow
+top-down from a parent to its children, such as a type environment `Γ` or a
+value environment `ρ`.  This library encodes inherited attributes as
+**method arguments** on parameterised `@rule` methods:
+
+```ts
+// Inherited: Γ (the type environment) flows top-down via the method argument.
+@rule exprProd(ctx: TypeEnv): Parser<Type> { ... }
+```
+
+and **synthesized** attributes as `.map()` return values flowing bottom-up.
 
 ### The `chain` combinator (monadic bind)
 
-The key enabler for Pattern 2 is `chain` — monadic bind for parsers.  It
-parses the first parser, then — *after* it completes — calls a function with
-the result to construct the second parser.  This lets a left sibling's
-*synthesized* value determine the right sibling's *inherited* context,
-which is exactly the **L-attributed grammar** pattern:
+The key enabler for L-attributed grammars (inherited attributes that depend
+on a left sibling's synthesized attribute) is `chain` — monadic bind for
+parsers.  It parses the first parser, then — *after* it completes — calls a
+function with the result to construct the second parser.  This lets a left
+sibling's *synthesized* value determine the right sibling's *inherited*
+context:
 
 ```ts
 @rule
@@ -191,13 +240,80 @@ reaches that point in the left-to-right traversal.
 | Example | Pattern | Demonstrates |
 | ------- | ------- | ------------- |
 | `arith-var.ts` | Pattern 2 (read-only env) | Inherited attributes, variable lookup |
-| `stlc.ts` | Both | One-pass type checking (Pattern 2), multi-pass evaluation (Pattern 1), proof-bearing type checking |
+| `stlc.ts` | Both | One-pass type checking (Pattern 2), one-pass evaluation (higher-order attributes), proof-bearing type checking |
 | `proplogic.ts` | Both | Truth evaluation (Pattern 2), natural-deduction proofs (Pattern 1) |
-| `lambda-eval.ts` | Pattern 1 | Untyped evaluation via multi-pass |
+| `lambda-eval.ts` | Higher-order attributes | Untyped evaluation as a one-pass grammar subclass |
 
 See [examples/stlc.ts](examples/stlc.ts) for the headline example: Simply
 Typed Lambda Calculus with four interpretations (AST, type checker,
 evaluator, proof-bearing type checker) over one abstract grammar.
+
+## Higher-order attributes (one-pass evaluation)
+
+The semantics patterns above cover static semantics (types, proofs) but stop
+short of *dynamic* semantics — runtime value evaluation — when the language
+has higher-order features (closures). Applying a closure `λx. body` to an
+argument `v` produces a **new tree fragment** (the body with `x` bound to
+`v`) that must itself be evaluated; the evaluation tree grows at runtime.
+
+A **higher-order attribute** is a semantic action that re-enters the engine
+over a fragment of the input under a different inherited context. For
+evaluation, `app` captures the closure body's **input span** and re-parses
+that substring under the extended environment via `_forward`. This lets the
+evaluator be a single grammar class extending the abstract grammar — the
+same shape as a type checker — with no intermediate AST and no separate
+recursive function.
+
+```ts
+class STLCEval extends AbstractSTLC<{ expr: Value; atom: Value; type: Type }> {
+    parseWith(input: string, env: ValEnv): Set<Value> {
+        this._input = input;
+        return this._parseWith(input, this.exprProd(env));
+    }
+
+    // The higher-order step: app re-parses the closure body's source
+    // substring under an extended env via _forward.
+    protected app(fn: Value, arg: Value): Value {
+        if (!(fn instanceof Closure)) throw new Error('cannot apply');
+        const bodyEnv = fn.env.extend(fn.param, arg);
+        return [...this._forward(this._input, fn.bodySpan, this.exprProd(bodyEnv))][0]!;
+    }
+}
+```
+
+The `_forward` method spins up a fresh `ZipperDriver` over the substring; per-pass memo isolation (stale-position detection in `goDown`) makes the nested re-entry safe — the same grammar instance may be reused without leaking state.
+
+See [examples/stlc.ts](examples/stlc.ts) and
+[examples/lambda-eval.ts](examples/lambda-eval.ts) for the full evaluators.
+
+## Tree-consuming grammars
+
+For passes whose input is an already-built tree (an AST or derivation tree)
+rather than source text, the engine also supports **tree-consuming grammars**
+via `TreeExp` and `flattenTree`. This is useful when a pass consumes a tree
+produced by a prior pass (e.g. desugaring, or consuming a derivation tree).
+A `TreeExp` matches a tree node by class name and dispatches to child
+sub-parsers by position, completing at the post-subtree offset — mirroring
+how `TokExp` completes at the next character position.
+
+```ts
+import { Grammar, rule, flattenTree, parserOf, TreeExp, or } from '@lapis-lang/zipper-grammar';
+
+class TreeEval extends Grammar<{ expr: number }> {
+    override start() { return this.expr; }
+    @rule get expr(): Parser<number> {
+        return or(this.numNode, this.addNode);
+    }
+    protected get addNode(): Parser<number> {
+        return parserOf(new TreeExp('Add',
+            [this.expr._exp, this.expr._exp],
+            (_n, [l, r]) => (l as number) + (r as number)));
+    }
+}
+
+const toks = flattenTree(tree, childrenOf);
+const [v] = [...new TreeEval().parseTree(toks)]; // 7
+```
 
 ## Grammar-native contracts
 
@@ -433,6 +549,9 @@ Import from `@lapis-lang/zipper-grammar` and use without `this.`:
 | `between(open, p, close)` | Wrap `p` between delimiters, returning `p`'s result. |
 | `trim(p, ws)`         | Wrap `p` with `ws` on both sides.          |
 | `keyword(word, reserved?)` | Literal with reserved-word guard.     |
+| `flattenTree(root, childrenOf)` | Flatten a tree into a preorder `TreeTok[]` stream for tree-consuming grammars. |
+| `TreeExp(tag, children, fn?)` | Match a tree node by class name; dispatch to child sub-parsers by position. |
+| `parserOf(exp)`       | Wrap a raw `Exp` (e.g. `TreeExp`) as a `Parser<T>`. |
 
 ### `Grammar<S>` — abstract base
 
@@ -444,6 +563,8 @@ Subclass and define productions as `@rule` getters (or methods) returning
 | `ws` (overridable getter)           | Whitespace production used by `sseq`. Default: zero or more spaces/tabs/newlines/CR. |
 | `sseq(...parsers)`                  | Sigspace sequence — like `seq` but auto-inserts `this.ws` between terms. |
 | `parse(input)` / `recognize(input)` | Drivers — full forest / boolean.           |
+| `parseTree(treeTokens)`             | Parse a flattened tree-token stream (tree-consuming grammar). |
+| `_forward(input, span, start)`       | Re-parse a substring under `start` — higher-order attribute combinator (protected). |
 
 The `@rule` decorator can wrap either a **getter** or a **method**:
 - `@rule get foo()` — memoised per instance; the canonical form for
@@ -698,6 +819,8 @@ test/
   [*"Executable Grammars in Newspeak"*](https://bracha.org/executableGrammars.pdf), ENTCS 2007.
 - Matthew Might, David Darais & Daniel Spiewak,
   [*"Parsing with Derivatives — A Functional Pearl"*](https://matt.might.net/papers/might2011derivatives.pdf), ICFP 2011.
+- [Syntax-directed translation](https://en.wikipedia.org/wiki/Syntax-directed_translation) — the formal foundation for attaching semantic rules to productions.
+- [Attribute grammar](https://en.wikipedia.org/wiki/Attribute_grammar) — synthesized and inherited attributes.
 - [decorator-contracts](https://github.com/final-hill/decorator-contracts) — the inspiration for the grammar-native contracts system.
 - [Design by Contract](https://en.wikipedia.org/wiki/Design_by_contract),
   [Liskov Substitution Principle](https://en.wikipedia.org/wiki/Liskov_substitution_principle).

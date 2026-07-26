@@ -6,6 +6,7 @@
 import { assert, assertEquals } from "@std/assert";
 import { ArithVarAST, ArithVarEval, Env } from "../examples/arith-var.ts";
 import {
+  Closure,
   STLCAST,
   STLCEval,
   STLCTypeCheck,
@@ -117,7 +118,7 @@ Deno.test("STLCTypeCheck — one-pass typing judgment", async (t) => {
   });
 });
 
-Deno.test("STLCEval — multi-pass evaluation", async (t) => {
+Deno.test("STLCEval — one-pass grammar evaluation", async (t) => {
   const ev = new STLCEval();
   const empty = ValEnv.empty();
 
@@ -134,6 +135,39 @@ Deno.test("STLCEval — multi-pass evaluation", async (t) => {
   await t.step("true evaluates to true", () => {
     const [v] = [...ev.parseWith("true", empty)];
     assertEquals(v, true);
+  });
+  // Higher-order attribute cases — the closure body is re-parsed under an
+  // extended env via _forward (the higher-order attribute mechanism).
+  await t.step("(\\x:Int -> Int. x) (\\y:Int. y) ⇓ closure y", () => {
+    const [v] = [...ev.parseWith("(\\x:Int -> Int. x) (\\y:Int. y)", empty)];
+    assert(v instanceof Closure);
+    assertEquals(v.param, "y");
+  });
+  await t.step(
+    "currying: (\\x:Int -> Int. \\y:Int. x) (\\z:Int. z) 99 ⇓ closure z",
+    () => {
+      const [v] = [
+        ...ev.parseWith("(\\x:Int -> Int. \\y:Int. x) (\\z:Int. z) 99", empty),
+      ];
+      assert(v instanceof Closure);
+      assertEquals(v.param, "z");
+    },
+  );
+  await t.step(
+    "sharing: let f = \\x:Int. x in let g = f in g (f 3) ⇓ 3",
+    () => {
+      const [v] = [
+        ...ev.parseWith(
+          "let f : Int -> Int = \\x:Int. x in let g : Int -> Int = f in g (f 3)",
+          empty,
+        ),
+      ];
+      assertEquals(v, 3);
+    },
+  );
+  await t.step("nested app: (\\x:Int. x) ((\\y:Int. y) 42) ⇓ 42", () => {
+    const [v] = [...ev.parseWith("(\\x:Int. x) ((\\y:Int. y) 42)", empty)];
+    assertEquals(v, 42);
   });
 });
 

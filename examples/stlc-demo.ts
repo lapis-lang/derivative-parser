@@ -5,6 +5,10 @@
  *  • STLCAST       — syntax builder
  *  • STLCTypeCheck — one-pass type checker (judgment `Γ ⊢ e : τ`)
  *  • STLCEval      — one-pass evaluator (judgment `ρ ⊢ e ⇓ v`)
+ *    The evaluator is a grammar subclass extending `AbstractSTLC`, the same
+ *    shape as the type checker. Closure application re-parses the body's
+ *    source substring under an extended env (higher-order attribute). No
+ *    intermediate AST, no separate recursive function.
  *  • STLCTyped     — proof-bearing type checker (derivation trees)
  */
 
