@@ -45,8 +45,7 @@ export class AssertionError extends Error {
 }
 
 /**
- * Thrown by `@ensures` / `@invariant` when a contract is violated, and by
- * `@rescue` when `retry` is misused.
+ * Thrown by `@ensures` / `@invariant` when a contract is violated.
  *
  * A violated postcondition or invariant is a bug in the semantic-action
  * implementation, not a parse failure — hence it throws rather than
@@ -172,9 +171,11 @@ export function getCheckedMode(): boolean {
  *   import { setCheckedMode } from "@lapis-lang/zipper-grammar";
  *   setCheckedMode(process.env.NODE_ENV === "development");
  *
- * Note: this only affects instances created *after* the call (and
- * instances with no per-instance override). To toggle an existing instance,
- * use {@link setCheckedModeFor}.
+ * The global default applies **live** to every instance that has no
+ * explicit per-instance override — toggling it affects existing instances
+ * immediately, not just new ones. (Per-instance overrides are used
+ * internally by `withoutChecks` for recursion guarding; they are not part
+ * of the public API.)
  */
 export function setCheckedMode(enabled: boolean): void {
   globalCheckedMode = enabled;
@@ -185,15 +186,26 @@ export function setCheckedMode(enabled: boolean): void {
  * Used inside predicate evaluation to avoid infinite recursion when a
  * predicate calls a contracted method on the same instance. Scoped per
  * instance so concurrent operations on *other* instances are unaffected.
- * Restores the prior value on exit, even if `fn` throws.
+ * Restores the prior state on exit, even if `fn` throws: if the instance
+ * had no explicit override (was falling back to the global default), the
+ * override is deleted so it continues to fall back; otherwise the prior
+ * override value is restored.
  */
 function withoutChecks<T>(instance: object, fn: () => T): T {
+  const hadOverride = instanceCheckedMode.has(instance);
   const prior = checkedModeFor(instance);
   setCheckedModeFor(instance, false);
   try {
     return fn();
   } finally {
-    setCheckedModeFor(instance, prior);
+    if (hadOverride) {
+      setCheckedModeFor(instance, prior);
+    } else {
+      // Remove the temporary override so the instance falls back to the
+      // global default again (avoiding pinning the global value as a
+      // permanent per-instance override).
+      instanceCheckedMode.delete(instance);
+    }
   }
 }
 
@@ -475,8 +487,8 @@ export function requires<This extends object, A extends unknown[], R>(
  * inference-rule conclusion).
  *
  * The predicate receives `(self, args, old, result)` where `old` is a
- * shallow snapshot of `self`'s own enumerable properties taken before the
- * method body runs, and `result` is the method's return value. If the
+ * shallow snapshot of `self`'s own enumerable *string* keys taken before
+ * the method body runs, and `result` is the method's return value. If the
  * postcondition fails, {@link ContractError} is thrown — a violated
  * postcondition is a bug in the semantic action, not a parse failure.
  *
@@ -553,11 +565,12 @@ export interface ParseFailure {
 /**
  * Handler invoked when a `@rescue`-decorated production yields an empty
  * parse forest. May return a `Parser<T>` (e.g. `this.empty()` or a
- * diagnostic-bearing epsilon) or call `retry` to re-run the production
- * once. If the handler returns without calling `retry`, its return value
- * is used as the production's result.
+ * diagnostic-bearing epsilon). The optional `retry` callback re-runs the
+ * production once; it is reserved for future engine integration (not yet
+ * wired — see issue #4 Phase 2). If the handler returns without calling
+ * `retry`, its return value is used as the production's result.
  *
- *   @rescue((self, failure, _args, retry) => {
+ *   @rescue((self, failure, _args, _retry) => {
  *     if (failure.reason === "type-mismatch") {
  *       self.diagnostic(`type error: ${failure.expected} ≠ ${failure.actual}`);
  *     }
@@ -575,8 +588,9 @@ export type RescueHandler = (
  * `@rescue(handler)` — method/getter decorator declaring a rescue handler
  * for a production. When the production's parse yields an empty forest,
  * the handler is invoked with a {@link ParseFailure} describing the
- * failure. The handler may report a diagnostic, return an alternative
- * parser, or call `retry` to re-run the production once.
+ * failure. The handler may report a diagnostic or return an alternative
+ * parser. The `retry` callback is reserved for future engine integration
+ * (not yet wired — see issue #4 Phase 2).
  *
  * Inherited unless overridden: a subclass that does not re-declare
  * `@rescue` inherits the parent's handler (most-derived wins).
@@ -656,8 +670,8 @@ export function findRescueHandler(
 //   • `@rule` memoization is unaffected — the `WeakMap` is keyed on the
 //     *target* (the unwrapped instance), which the Proxy forwards to
 //     transparently. Internal `this` references resolve on the target.
-//   • `checkedMode` gates the whole handler: when disabled, `get`/`set`
-//     fall through to the target with zero overhead.
+//   • `checkedMode` gates the `get` trap: when disabled, it returns the
+//     raw method with zero overhead.
 
 /**
  * The set of property keys that must bypass contract checking (internal
@@ -668,8 +682,8 @@ export function findRescueHandler(
  * Rather than maintain an allow-list (fragile), we check whether the
  * resolved property is a function that is *not* a `@rule`-decorated
  * production. `@rule` replaces the method on the prototype with a wrapper
- * that returns a `Parser`; we detect productions by a sentinel. See
- * `Grammar._isProduction`.
+ * that returns a `Parser`; we detect productions by a sentinel applied
+ * by `_markProduction`.
  */
 const CONTRACT_SKIP_KEYS = new Set<PropertyKey>([
   "constructor",
@@ -679,7 +693,7 @@ const CONTRACT_SKIP_KEYS = new Set<PropertyKey>([
 /**
  * `ProxyHandler` that enforces `@requires` / `@ensures` / `@invariant` on
  * every method call. Applied by `Grammar`'s constructor. When `checkedMode`
- * is disabled, all traps pass through to the target unchanged.
+ * is disabled, the `get` trap returns the raw method (zero overhead).
  *
  * Order of assertions (per the reference library):
  *   invariant(before) → requires → body → ensures → invariant(after)

@@ -219,23 +219,29 @@ Deno.test("@requires — disabled when checkedMode is off", () => {
   }
 });
 
-Deno.test("checkedMode — per-instance isolation: global toggle doesn't affect existing instances", () => {
-  // checkedMode is scoped per-instance: an instance captures the global
-  // default at construction time. Toggling the global default afterwards
-  // affects new instances but not existing ones, so concurrent operations
-  // on existing instances can't be disabled by a later global toggle.
+Deno.test("checkedMode — global toggle affects all instances without an explicit override", () => {
+  // checkedMode has a global default that applies live to every instance
+  // that has no explicit per-instance override. Toggling the global default
+  // affects existing instances immediately (not just new ones). This is
+  // intentional: the global default is the "production off switch".
+  // Per-instance isolation matters only for `withoutChecks` (internal
+  // recursion guard), which is scoped per-instance so concurrent
+  // operations on different instances don't interfere.
   const prior = getCheckedMode();
   try {
     setCheckedMode(true); // global default on
     const a = new ReqDemo();
     assertEquals(a.sqrt(-1), undefined); // enforces @requires
-    // Flip the global default off; `a` keeps its captured state (on).
+    // Flip the global default off; `a` has no explicit override, so it
+    // falls back to the global default (now off) → checks disabled.
     setCheckedMode(false);
-    const c = new ReqDemo(); // constructed under off → no checks
+    assertEquals(Number.isNaN(a.sqrt(-4)), true); // body runs unguarded
+    // A new instance constructed under off → no Proxy → no checks.
+    const c = new ReqDemo();
     assertEquals(Number.isNaN(c.sqrt(-4)), true);
-    // `a` was constructed under on → still enforces despite the global flip.
-    assertEquals(a.sqrt(-1), undefined);
+    // Flip back on; both `a` and `c` now fall back to on.
     setCheckedMode(true);
+    assertEquals(a.sqrt(-1), undefined); // enforces again
   } finally {
     setCheckedMode(prior);
   }

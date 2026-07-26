@@ -365,16 +365,16 @@ refinement is a valid strengthening.
 
 ### Checked mode
 
-Contract checking is enabled by default. Each `Grammar` instance captures
-the global default at construction time; toggling the default afterwards
-affects only newly-constructed instances, so concurrent operations on
-existing instances can't disable each other's checks. Disable for zero
-production overhead:
+Contract checking is enabled by default. The global default applies live
+to every `Grammar` instance — toggling it affects existing instances
+immediately. (The internal `withoutChecks` recursion guard is scoped
+per-instance so concurrent operations on different instances don't
+interfere.) Disable for zero production overhead:
 
 ```ts
 import { setCheckedMode } from '@lapis-lang/zipper-grammar';
 
-setCheckedMode(false);  // new instances get no Proxy — zero overhead
+setCheckedMode(false);  // all instances skip checks — zero overhead
 ```
 
 ## Source positions
@@ -460,7 +460,7 @@ The `@rule` decorator can wrap either a **getter** or a **method**:
 | `@ensures`      | decorator | Postcondition `(self, args, old, result) => boolean`; throws `ContractError` on failure. AND-ed across inheritance. |
 | `@invariant`    | decorator | Class invariant; checked after construction and after each contracted call. AND-ed across inheritance. |
 | `@rescue`       | decorator | Parse-failure recovery; handler `(self, failure, args, retry?) => unknown` invoked when a production yields an empty forest. Inherited (most-derived wins). |
-| `setCheckedMode(b)` / `getCheckedMode()` | function | Toggle the global default for contract enforcement. Each `Grammar` instance captures the default at construction; existing instances are unaffected by later toggles. When off at construction, no Proxy is created (zero overhead). |
+| `setCheckedMode(b)` / `getCheckedMode()` | function | Toggle the global default for contract enforcement. Applies live to all instances (existing and new). When off, no Proxy is created for new instances and existing Proxies skip checks (zero overhead). |
 | `ContractError` / `AssertionError` | class | Error types thrown by `@ensures`/`@invariant` and `assert` respectively. |
 | `ParseFailure` / `Diagnostic` | type | `{ reason, message?, ... }` — failure description passed to `@rescue` / carried by `diagnostic()`. |
 

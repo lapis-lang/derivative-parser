@@ -22,8 +22,8 @@ export type GrammarShape = Record<string, unknown>;
 
 /**
  * A diagnostic value carried through the parse forest by {@link diagnostic}.
- * Collected by {@link Grammar.parseWithDiagnostics} to report parse-failure
- * reasons (e.g. from `@rescue` handlers) without raising exceptions.
+ * Used by `@rescue` handlers to report parse-failure reasons without raising
+ * exceptions.
  */
 export interface Diagnostic {
   /** Machine-readable reason category, e.g. `"type-mismatch"`. */
@@ -156,8 +156,7 @@ export abstract class Grammar<S extends GrammarShape = GrammarShape> {
   /**
    * A diagnostic-bearing ε — always succeeds, contributing a {@link Diagnostic}
    * value to the parse forest. Used inside `@rescue` handlers to report why
-   * a branch failed without raising an exception. Diagnostics are collected
-   * by {@link parseWithDiagnostics}.
+   * a branch failed without raising an exception.
    */
   protected diagnostic(message: string, reason = "error"): Parser<Diagnostic> {
     return this.epsilon({ reason, message });
