@@ -3,8 +3,9 @@
  * grammars without `this.` boilerplate.
  *
  * Pure functions wrapping the same `Exp` nodes that {@link Grammar} uses
- * internally. The `Grammar` base class keeps thin protected wrappers that
- * delegate here, so existing code is fully backward compatible.
+ * internally. These supersede the former `this.`-prefixed methods on
+ * `Grammar`; existing code must migrate to importing the standalone
+ * functions.
  *
  * See the README for the full introduction and design rationale.
  */

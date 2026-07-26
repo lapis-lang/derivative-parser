@@ -178,10 +178,9 @@ export abstract class AbstractLambda<S extends LambdaShape> extends Grammar<S> {
 
   /* ── lexemes ─────────────────────────────────────────────────────── */
   //
-  // `ident`, `ws`, and `ws1` now come from the shared lexeme library
-  // (`src/lexemes.ts`).  The reserved-word guard for `let`/`in` is handled
-  // by `keyword()` in the `letProd` production above, so `ident` itself is
-  // a plain identifier — no inline `.chain()` check needed here.
+  // `ident`, `ws`, and `ws1` come from the shared lexeme library
+  // (`src/lexemes.ts`). The reserved-word guard for `let`/`in` is handled
+  // inline via `.chain()` below.
 
   @rule
   protected get ident(): Parser<string> {
