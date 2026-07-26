@@ -4,7 +4,7 @@
  */
 
 import { pred, seq } from "./combinators.ts";
-import { AltExp, DelayedExp, EpsilonExp, SeqExp } from "./zipper/zipper.ts";
+import { AltExp, DelayedExp, EpsilonExp, SeqExp } from "./zipper.ts";
 import { Parser } from "./Parser.ts";
 
 /* ─── Whitespace ─────────────────────────────────────────────────────── */

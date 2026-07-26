@@ -5,7 +5,7 @@ import {
   type Tok,
   type TreeTok,
   ZipperDriver,
-} from "./zipper/zipper.ts";
+} from "./zipper.ts";
 import { treeKey } from "./util/tree_key.ts";
 import {
   _markProduction,

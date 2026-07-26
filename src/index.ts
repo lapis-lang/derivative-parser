@@ -6,7 +6,7 @@
 export { Grammar, rule } from "./Grammar.ts";
 export type { Diagnostic, GrammarShape } from "./Grammar.ts";
 export { Parser, parserOf } from "./Parser.ts";
-export type { Span } from "./zipper/zipper.ts";
+export type { Span } from "./zipper.ts";
 
 export {
   between,
@@ -63,5 +63,5 @@ export type {
 } from "./contracts.ts";
 
 /* ── Tree-consuming grammars (higher-order attribute grammars) ── */
-export { flattenTree, TreeExp } from "./zipper/zipper.ts";
-export type { TreeTok } from "./zipper/zipper.ts";
+export { flattenTree, TreeExp } from "./zipper.ts";
+export type { TreeTok } from "./zipper.ts";

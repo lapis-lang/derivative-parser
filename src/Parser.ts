@@ -10,7 +10,7 @@ import {
   RedExp,
   SeqExp,
   type Span,
-} from "./zipper/zipper.ts";
+} from "./zipper.ts";
 
 /**
  * The user-facing combinator type. Constructed by `Grammar` combinators and
