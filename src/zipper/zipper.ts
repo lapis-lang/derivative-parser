@@ -161,8 +161,9 @@ export function flattenTree(
     return size;
   };
   visit(root);
-  // out is in preorder but offsets were assigned as we descended; re-sort by
-  // offset so the stream is in the order tokens were created (preorder).
+  // Tokens are pushed post-recurse (after children), so the array is in
+  // postorder despite offsets being assigned preorder. Re-sort by offset to
+  // restore preorder for positional matching by TreeExp.
   out.sort((a, b) => a.offset - b.offset);
   return out;
 }
@@ -515,11 +516,6 @@ export class ZipperDriver {
   /** Pending tree completions keyed by target offset. */
   private treePending: Map<number, { mem: Mem; value: unknown }[]> = new Map();
 
-  /** The tree token at `offset`, or `undefined` past the end. */
-  treeTokenAt(offset: number): TreeTok | undefined {
-    return this.treeTokens[offset];
-  }
-
   /** Set the cursor at `offset`, minting a fresh `Pos` for memoisation. */
   private setTreeCursor(offset: number): void {
     this.treeCursorOffset = offset;
@@ -629,27 +625,33 @@ export class ZipperDriver {
    * Drive the tree parse: process pending completions offset by offset.
    * The bootstrap seeds the root at offset 0; each `TreeExp` schedules
    * completions at the post-subtree offset via `scheduleTreeCompletion`.
-   * We drain offsets in ascending order, flushing each offset's pending
-   * completions (which may schedule further completions at later offsets).
+   * Completions are always scheduled at strictly increasing offsets (a
+   * subtree completes after all its children), so `treePending`'s insertion
+   * order is ascending — we drain in insertion order without scanning for
+   * the minimum, avoiding O(n²) on large trees.
    */
   private _runTreeSteps(): void {
     // The bootstrap worklist holds the seed; flush it at offset 0 to kick
     // off the root TreeExp match.
     this._flushTreeOffset(0);
-    // Drain remaining pending offsets in ascending order.
+    // Drain remaining pending offsets in insertion order (== ascending).
     while (this.treePending.size > 0) {
-      const minOffset = Math.min(...this.treePending.keys());
-      this._flushTreeOffset(minOffset);
+      const nextOffset = this.treePending.keys().next().value as number;
+      this._flushTreeOffset(nextOffset);
     }
   }
 
-  /** Flush all pending completions scheduled at `offset`, setting the cursor there. */
+  /**
+   * Flush all pending completions scheduled at `offset`, setting the cursor
+   * there. Does NOT reset `topValues` — top-level results accumulate across
+   * offsets so that a grammar producing results at multiple positions isn't
+   * silently lost. `topValues` is reset once in `_initTree`.
+   */
   private _flushTreeOffset(offset: number): void {
     const bucket = this.treePending.get(offset);
     if (!bucket) return;
     this.treePending.delete(offset);
     this.setTreeCursor(offset);
-    this.topValues = [];
     // Save the flush position: child descents (descendTreeChild) change
     // this.pos mid-loop, so restore it before each completeAt so every
     // completion in this bucket lands at this offset's position.

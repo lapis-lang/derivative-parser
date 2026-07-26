@@ -186,3 +186,50 @@ Deno.test("flattenTree — preorder with correct arity and offsets", () => {
   assertEquals(toks[4]!.tag, "Num");
   assertEquals(toks.map((t) => t.offset), [0, 1, 2, 3, 4]);
 });
+
+Deno.test("TreeExp — empty tree yields empty parse forest", () => {
+  // A null/undefined root produces no tokens; the grammar matches nothing.
+  const g = new TreeEval();
+  const toks = flattenTree(null, childrenOf);
+  const results = [...g.parseTree(toks)];
+  assertEquals(results.length, 0);
+});
+
+Deno.test("TreeExp — fewer child parsers than node arity skips extra children", () => {
+  // A TreeExp matching a 2-child node with only 1 child parser should skip
+  // the second child's subtree and complete at the post-subtree offset.
+  // This is the lambda-captures-body pattern: match the node, consume only
+  // the children you need, leave the rest unconsumed.
+  class FirstChildOnly extends Grammar<{ expr: number }> {
+    override start(): Parser<number> {
+      return parserOf<number>(
+        new TreeExp(
+          "Add",
+          [this.expr._exp],
+          (_node: unknown, [l]: unknown[]) => l as number,
+        ),
+      );
+    }
+    @rule
+    get expr(): Parser<number> {
+      return or(
+        parserOf<number>(
+          new TreeExp("Num", [], (n: unknown) => (n as Num).value),
+        ),
+        parserOf<number>(
+          new TreeExp(
+            "Add",
+            [this.expr._exp, this.expr._exp],
+            (_n: unknown, [l, r]: unknown[]) => (l as number) + (r as number),
+          ),
+        ),
+      );
+    }
+  }
+  const g = new FirstChildOnly();
+  // Add(Num(10), Num(20)) — only the first child (10) is consumed; the
+  // second (20) is skipped. The result is 10, not 30.
+  const toks = flattenTree(new Add(new Num(10), new Num(20)), childrenOf);
+  const [v] = [...g.parseTree(toks)];
+  assertEquals(v, 10);
+});
