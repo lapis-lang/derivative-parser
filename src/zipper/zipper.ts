@@ -1,31 +1,6 @@
 /**
- * Parsing with Zippers (Darragh & Adams, ICFP 2020) — TypeScript port
- * extended with full semantic-action support.
- *
- * The algorithm replaces Brzozowski's per-token global derivative with a
- * worklist of *zippers* — each zipper is `(Exp, Mem, value)`, where the
- * `Exp` is the "in-focus" subexpression, `Mem` records start/end positions
- * plus the list of parent contexts, and `value` carries the semantic result
- * accumulated so far. Sharing is achieved by physical equality on `Pos`
- * (a fresh allocation per token position): if a node has already been
- * visited at the current position, we just thread a new parent context into
- * its existing memo rather than re-traversing its sub-grammar.
- *
- * OO structure:
- *
- *   Exp   ─┬─ TokExp         Cxt   ─┬─ TopCxt
- *          ├─ PredTokExp             ├─ SeqCxt
- *          ├─ SeqExp                 ├─ AltCxt
- *          ├─ AltExp                 └─ RedCxt
- *          ├─ EpsilonExp
- *          ├─ EmptyExp
- *          ├─ RedExp
- *          └─ DelayedExp
- *
- * Each `Exp` subclass implements `descend(driver, m)`; each `Cxt` subclass
- * implements `goUp(driver, value)`. The driver holds all mutable
- * derivation state (`worklist`, `topValues`, `pos`, `currentToken`),
- * making the engine re-entrant by construction.
+ * Parsing with Zippers (Darragh & Adams, ICFP 2020) — TypeScript port with
+ * semantic-action support. See the README for the algorithm overview.
  */
 
 /* ─── Position sentinel ──────────────────────────────────────────────── */
@@ -42,12 +17,7 @@ const P_BOTTOM: Pos = freshPos();
 
 /* ─── Tokens ─────────────────────────────────────────────────────────── */
 
-/**
- * Tokens are `(tag, sym, offset)`. `tag` is a string used for equality
- * (a single character in our test setup); `sym` is a human-readable label;
- * `offset` is the 0-based character position in the source string.
- * Pattern tokens (inside `TokExp` / `PredTokExp`) use `offset: -1`.
- */
+/** A token: `tag` for equality, `sym` for display, `offset` for position. Pattern tokens use `offset: -1`. */
 export type Tok = {
   readonly tag: string;
   readonly sym: string;
@@ -61,16 +31,7 @@ const T_EOF: Tok = { tag: "\u0000<EOF>", sym: "<EOF>", offset: -1 };
 
 /* ─── Mem ────────────────────────────────────────────────────────────── */
 
-/**
- * Per-(node, position) memo. Mutable on purpose — the algorithm threads
- * parent contexts and accumulated semantic values back into a single shared
- * `Mem` so grammar nodes visited multiple times at the same position are
- * folded.
- *
- * `endPos === P_BOTTOM` means "not yet completed at any position".
- * `values` collects all semantic results that have been propagated through
- * this memo at the current position (one per parse tree).
- */
+/** Per-(node, position) memo. Mutable — threads parent contexts and accumulated values. `endPos === P_BOTTOM` means not yet completed. */
 export class Mem {
   endPos: Pos = P_BOTTOM;
   values: unknown[] = [];
@@ -79,25 +40,12 @@ export class Mem {
 
 /* ─── Exp hierarchy ──────────────────────────────────────────────────── */
 
-/**
- * In-focus grammar subexpression. Subclasses implement `descend` to do
- * the structural step.
- */
+/** In-focus grammar subexpression. Subclasses implement `descend` for the structural step. */
 export abstract class Exp {
-  /**
-   * Mutable memo: lazily updated as derivation reaches this node at new
-   * positions. `undefined` means "never visited" — handled by `goDown`.
-   */
+  /** Mutable memo: lazily updated as derivation reaches this node at new positions. */
   m: Mem | undefined = undefined;
 
-  /**
-   * Descend into this Exp under context `parent`.
-   *
-   * If we've already visited this node at the current position, thread
-   * `parent` into the existing memo (and propagate any already-accumulated
-   * values upward). Otherwise allocate a fresh memo and dispatch via
-   * `descend`.
-   */
+  /** Descend into this Exp under context `parent`. Threads `parent` into existing memo if already visited at this position. */
   goDown(driver: ZipperDriver, parent: Cxt): void {
     const m0 = this.m;
     if (m0 && m0.startPos === driver.pos) {
@@ -148,10 +96,7 @@ export class PredTokExp extends Exp {
 
 /* ─── Structural nodes ───────────────────────────────────────────────── */
 
-/**
- * N-ary sequence with a semantic function.
- * `fn` receives an array of child values (in order) and returns the combined value.
- */
+/** N-ary sequence with a semantic function. `fn` receives child values in order and returns the combined value. */
 export class SeqExp extends Exp {
   constructor(
     readonly sym: string,
@@ -213,10 +158,7 @@ export class RedExp<A = unknown, B = unknown> extends Exp {
   }
 }
 
-/**
- * Lazy / forward-reference node — forces its thunk on first descend.
- * Required for `@rule` memoisation and cyclic `many()` grammars.
- */
+/** Lazy / forward-reference node — forces its thunk on first descend. Required for `@rule` memoisation and cyclic `many()` grammars. */
 export class DelayedExp<T = unknown> extends Exp {
   private _forced: Exp | undefined;
   constructor(private readonly thunk: () => Exp) {
@@ -229,41 +171,15 @@ export class DelayedExp<T = unknown> extends Exp {
   }
 
   descend(driver: ZipperDriver, m: Mem): void {
-    // Delegate straight to the forced node, passing an AltCxt to forward
-    // values upward through mem.
+    // Delegate to the forced node, forwarding values upward through mem.
     this.force().goDown(driver, new AltCxt(m));
   }
 }
 
 /**
- * Monadic bind — the L-attributed grammar combinator.
- *
- * Parses `first`; for each value `v` it produces, calls `fn(v)` to obtain
- * the second parser and descends into it.  The final value is the pair
- * `[v, w]` where `w` is the second parser's result.
- *
- * This enables **one-pass** context threading where a *synthesised*
- * attribute of the left sibling determines the *inherited* context of the
- * right sibling — the L-attributed grammar pattern.  For example, in
- * `λx:τ. body`, the type `τ` (parsed first) extends the type environment `Γ`
- * before parsing `body`:
- *
- *   this.chain(this.type, (ty) => this.expr(Γ.extend(name, ty)))
- *
- * Without `chain`, `seq` builds all children eagerly at construction time,
- * so the parsed `τ` cannot flow into `body`'s parser.  `chain` defers
- * construction of the second parser until the first has completed, exactly
- * when the zipper reaches that point in the left-to-right traversal.
- *
- * **Memoisation caveat**: the second parser is constructed fresh per
- * parse-tree of `first`.  If `first` is ambiguous (multiple parse trees),
- * `fn` is called multiple times, producing distinct `Exp` nodes.  Each gets
- * its own `Mem` slot, so there is no cross-contamination.  However, the
- * `@rule` decorator's per-argument memoisation does not apply to the
- * dynamically-constructed second parser — it is not cached.  For grammars
- * where the second parser is a `@rule` method call (e.g.
- * `this.expr(Γ')`), the `@rule` cache *does* kick in because the method is
- * called through the decorated wrapper.
+ * Monadic bind — the L-attributed grammar combinator. Parses `first`, then
+ * for each value `v`, calls `fn(v)` to get the second parser. See the README
+ * for L-attributed grammar usage.
  */
 export class ChainExp<A = unknown, B = unknown> extends Exp {
   constructor(
@@ -320,10 +236,7 @@ export class SeqCxt extends Cxt {
   }
 }
 
-/**
- * Inside an alternation — passes values straight through to the parent mem.
- * Used both by `AltExp` and `DelayedExp`.
- */
+/** Inside an alternation — passes values straight through to the parent mem. Used by `AltExp` and `DelayedExp`. */
 export class AltCxt extends Cxt {
   constructor(readonly m: Mem) {
     super();
@@ -333,11 +246,7 @@ export class AltCxt extends Cxt {
   }
 }
 
-/**
- * Monadic-bind context: receives `first`'s value, calls `fn` to build the
- * second parser, descends into it.  When the second completes, flows the
- * pair `[firstVal, secondVal]` upward.
- */
+/** Monadic-bind context: receives `first`'s value, calls `fn` to build the second parser, then flows the pair `[firstVal, secondVal]` upward. */
 export class ChainCxt extends Cxt {
   constructor(
     readonly m: Mem,
@@ -347,10 +256,7 @@ export class ChainCxt extends Cxt {
   }
 
   goUp(driver: ZipperDriver, value: unknown): void {
-    // Guard: if the user-provided `fn` throws (e.g. a `chain` callback
-    // that constructs an invalid parser), treat this branch as failed —
-    // the parse tree is silently dropped, consistent with the parse-forest
-    // model where a failed semantic action means that tree doesn't exist.
+    // Guard against non-Parser returns from chain callbacks.
     let second: Exp;
     try {
       second = this.fn(value);
@@ -385,10 +291,7 @@ export class RedCxt extends Cxt {
   goUp(driver: ZipperDriver, value: unknown): void {
     const start = driver.posToOffset.get(this.m.startPos) ?? 0;
     const end = driver.posToOffset.get(driver.pos) ?? start;
-    // Guard: if the user-provided semantic action (`fn`) throws, treat
-    // this branch as failed — the parse tree is silently dropped.
-    // This is consistent with the parse-forest model: a failed `.map()`
-    // callback means that parse tree doesn't exist.
+    // Apply the semantic action to the completed value.
     let result: unknown;
     try {
       result = this.fn(value, { start, end });
@@ -482,22 +385,17 @@ export class ZipperDriver {
 
   private _init(start: Exp): void {
     this.topValues = [];
-    // Reset to the default (full-forest) mode so a driver reused after a
-    // `recognize()` call doesn't leak the suppression flag into a later
-    // `parse()`. `recognize()` re-enables this after `_init()` returns.
+    // Reset to full-forest mode so a reused driver doesn't leak the
+    // recognize() suppression flag into a later parse().
     this.recognizeOnly = false;
     this.posToOffset.clear();
     const initialPos = freshPos();
     this.posToOffset.set(initialPos, 0);
     this.pos = initialPos;
     this.currentToken = T_EOF;
-    // Bootstrap: create a top-level Mem whose parent will collect the result,
-    // and a SeqCxt that, when the first step() fires, will descend into `start`.
-    //
-    // The seed completion at P_BOTTOM carries a dummy value (undefined).
-    // SeqCxt.goUp sees right=[start] and calls start.goDown, accumulating
-    // the dummy as revLeftVals[0].  When start completes with value `v`,
-    // SeqCxt.goUp calls fn([undefined, v]) — so we must extract index 1.
+    // Bootstrap: a top-level Mem collects the result; a SeqCxt descends into
+    // `start` on the first step(). The seed dummy value lands at index 0, so
+    // fn extracts index 1.
     const mTop = new Mem(P_BOTTOM, [new TopCxt()]);
     const mSeq = new Mem(P_BOTTOM, [
       new SeqCxt(mTop, (vs) => vs[1]!, [], [start]),
@@ -506,10 +404,7 @@ export class ZipperDriver {
   }
 }
 
-/**
- * Stand-alone recognition entry point — convenience wrapper around
- * a fresh `ZipperDriver`.
- */
+/** Stand-alone recognition entry point — convenience wrapper around a fresh `ZipperDriver`. */
 export function recognize(tokens: Iterable<Tok>, start: Exp): boolean {
   return new ZipperDriver().recognize(start, tokens);
 }

@@ -9,14 +9,14 @@ including left-recursion and ambiguity — is handled by lazy references and
 the PwZ zipper engine.
 
 ```ts
-import { Grammar, rule } from '@lapis-lang/zipper-grammar';
+import { Grammar, rule, char, epsilon, or, seq } from '@lapis-lang/zipper-grammar';
 
 class BalancedParens extends Grammar<{ s: string }> {
     start() { return this.s; }
     @rule get s() {
-        return this.or(
-            this.seq(this.char('('), this.s, this.char(')'), this.s).map(() => 'ok'),
-            this.epsilon('ok'),
+        return or(
+            seq(char('('), this.s, char(')'), this.s).map(() => 'ok'),
+            epsilon('ok'),
         );
     }
 }
@@ -99,23 +99,23 @@ class IndentLang extends Grammar<{ doc: Node[] }> {
     override start() { return this.block(0); }
 
     @rule block(depth: number): Parser<Node[]> {
-        return this.seq(this.line(depth), this.block(depth).opt())
+        return seq(this.line(depth), this.block(depth).opt())
             .map(([first, rest]) => [first, ...(rest ?? [])]);
     }
 
     @rule line(depth: number): Parser<Node> {
         // leaf:   <spaces> key ": " value "\n"
-        const leaf = this.seq(this.spaces(depth), this.key, this.literal(': '), this.value, this.char('\n'))
+        const leaf = seq(this.spaces(depth), this.key, literal(': '), this.value, char('\n'))
             .map(([, k, , v]) => ({ kind: 'leaf' as const, key: k, value: v }));
         // branch: <spaces> key ":\n" <nested block>
-        const branch = this.seq(this.spaces(depth), this.key, this.literal(':\n'), this.block(depth + 2))
+        const branch = seq(this.spaces(depth), this.key, literal(':\n'), this.block(depth + 2))
             .map(([, k, , children]) => ({ kind: 'branch' as const, key: k, children }));
-        return this.or(branch, leaf);
+        return or(branch, leaf);
     }
 
     @rule spaces(n: number): Parser<string> {
-        if (n === 0) return this.epsilon('');
-        return this.seq(this.char(' '), this.spaces(n - 1)).map(() => '');
+        if (n === 0) return epsilon('');
+        return seq(char(' '), this.spaces(n - 1)).map(() => '');
     }
 }
 ```
@@ -170,9 +170,9 @@ which is exactly the **L-attributed grammar** pattern:
 ```ts
 @rule
 protected lambdaProd(ctx: unknown): Parser<S['expr']> {
-    return this.seq(
-        this.lambdaHead, this.ident, this.ws, this.char(':'), this.ws,
-        this.type, this.ws, this.char('.'), this.ws,
+    return seq(
+        this.lambdaHead, this.ident, this.ws, char(':'), this.ws,
+        this.type, this.ws, char('.'), this.ws,
     ).chain(([, param, , , , ty, , , ]) =>
         // τ is now available; extend ctx and parse body.
         this.exprProd(this.extendCtx(ctx, param, ty))
@@ -256,7 +256,7 @@ import { assert, implies, iff } from '@lapis-lang/zipper-grammar';
 
 @rule
 protected lambdaProd(ctx: unknown): Parser<S['expr']> {
-    return this.seq(/* ... */).chain(([, param, , , , ty, , ,]) => {
+    return seq(/* ... */).chain(([, param, , , , ty, , ,]) => {
         assert(typeof param === 'string', 'param must be a string');
         assert(ty instanceof TVar || ty instanceof TFun, 'ty must be a Type');
         return this.exprProd(this.extendCtx(ctx, param, ty))
@@ -344,7 +344,7 @@ value (`{ reason, message }`) through the parse forest, so callers can
 report *why* a branch failed without raising an exception:
 
 ```ts
-return this.diagnostic('ill-typed application: Int is not a function', 'type-mismatch');
+return diagnostic('ill-typed application: Int is not a function', 'type-mismatch');
 ```
 
 ### Subcontracting (Liskov)
@@ -412,22 +412,37 @@ import {
 import type { Span } from '@lapis-lang/zipper-grammar';
 ```
 
+### Combinators — standalone functions
+
+Import from `@lapis-lang/zipper-grammar` and use without `this.`:
+
+| Function              | Effect                                     |
+| --------------------- | ------------------------------------------ |
+| `char(c)`             | Match one literal character.               |
+| `pred(p, label?)`     | Match a character predicate.               |
+| `literal(s)`          | Match a multi-character literal.           |
+| `epsilon(value)`      | ε — always succeeds, yielding `value`.     |
+| `diagnostic(msg, reason?)` | ε carrying a `Diagnostic` — for `@rescue` handlers. |
+| `empty()`             | ∅ — the failing parser.                    |
+| `or(...parsers)`      | Variadic alternation.                      |
+| `seq(...parsers)`     | Variadic concatenation; returns tuple.     |
+| `chain(first, fn)`    | Monadic bind — L-attributed grammar combinator. Result is `[T, U]`. |
+| `sseq(ws, ...parsers)`| Sigspace sequence — auto-inserts `ws` (non-capturing) between terms. |
+| `plus(p)`             | One-or-more repetition (`A+`).             |
+| `sepBy(p, sep)`       | Zero-or-more separated list.               |
+| `between(open, p, close)` | Wrap `p` between delimiters, returning `p`'s result. |
+| `trim(p, ws)`         | Wrap `p` with `ws` on both sides.          |
+| `keyword(word, reserved?)` | Literal with reserved-word guard.     |
+
 ### `Grammar<S>` — abstract base
 
 Subclass and define productions as `@rule` getters (or methods) returning
-`Parser<T>`. All of these are protected helpers on `Grammar`:
+`Parser<T>`. The base class provides:
 
-| Method                              | Effect                                     |
+| Member                              | Effect                                     |
 | ----------------------------------- | ------------------------------------------ |
-| `char(c)`                           | Match one literal character.               |
-| `pred(p, label?)`                   | Match a character predicate.               |
-| `literal(s)`                        | Match a multi-character literal.           |
-| `epsilon(value)`                    | ε — always succeeds, yielding `value`.     |
-| `diagnostic(msg, reason?)`          | ε carrying a `Diagnostic` (`{ reason, message }`) — for `@rescue` handlers. |
-| `empty()`                           | ∅ — the failing parser.                    |
-| `or(...parsers)`                    | Variadic alternation.                      |
-| `seq(...parsers)`                   | Variadic concatenation; returns tuple.     |
-| `chain(first, fn)`                  | Monadic bind — L-attributed grammar combinator. `fn` receives the first parser's result and returns the next parser. Result is `[T, U]`. |
+| `ws` (overridable getter)           | Whitespace production used by `sseq`. Default: zero or more spaces/tabs/newlines/CR. |
+| `sseq(...parsers)`                  | Sigspace sequence — like `seq` but auto-inserts `this.ws` between terms. |
 | `parse(input)` / `recognize(input)` | Drivers — full forest / boolean.           |
 
 The `@rule` decorator can wrap either a **getter** or a **method**:
@@ -448,6 +463,17 @@ The `@rule` decorator can wrap either a **getter** or a **method**:
 | `chain(fn)` | Monadic bind. `fn` receives the parsed value `T` and returns a `Parser<U>`; result is `Parser<[T, U]>`. Enables L-attributed one-pass parsing. |
 | `many()`    | A\* — parse trees are arrays `T[]`.             |
 | `opt()`     | A ∪ ε — parse trees are `T \| undefined`.       |
+
+### Lexemes — shared character-level building blocks
+
+| Function | Effect |
+| -------- | ------ |
+| `ws()` | Zero-or-more whitespace (space, tab, newline, CR). |
+| `ws1()` | One-or-more whitespace. |
+| `wsChar()` | A single whitespace character. |
+| `digit()` | A single decimal digit `[0-9]`. |
+| `digits()` | One or more digits, joined into a string. |
+| `ident(first?, rest?)` | Identifier — lowercase letter followed by letters/digits/`_`. Predicates optional. |
 
 ### Contracts
 

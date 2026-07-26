@@ -1,31 +1,20 @@
 /**
- * Untyped Lambda Calculus — AST builder + call-by-value evaluator.
- *
- * A bridge from the old `lambda.ts` (syntax-only) to the semantics-as-grammar
- * pattern.  Uses the shape-typed abstract-grammar pattern from `arith.ts`:
- * one abstract grammar, two interpretations (AST builder + evaluator).
- *
- * The evaluator is **multi-pass** (Pattern 1): the grammar builds the AST,
- * then `evalTerm` evaluates it.  This is honest — one-pass evaluation of
- * lambda abstractions requires deferring the body (see `stlc.ts` for
- * discussion).
- *
- * Grammar (informal):
- *
- *   expr  →  let id = expr in expr       (let binding)
- *         |  λ id . expr                  (abstraction, λ or \)
- *         |  app
- *   app   →  app atom                     (left-associative application)
- *         |  atom
- *   atom  →  id | ( expr )
- *
- * Usage:
- *   const g = new LambdaAST();
- *   const [ast] = g.parse("let id = \\x.x in id id 7");
- *   const v = lambdaEval(ast, ValEnv.empty());   // 7
+ * Untyped lambda calculus — AST builder + call-by-value evaluator.
+ * Multi-pass: grammar builds AST, then `evalTerm` evaluates it.
  */
 
 import { Grammar, rule } from "../src/index.ts";
+import {
+  char,
+  empty,
+  epsilon,
+  ident as identLexeme,
+  literal,
+  or,
+  seq,
+  ws as wsLexeme,
+  ws1 as ws1Lexeme,
+} from "../src/index.ts";
 import type { Parser } from "../src/index.ts";
 
 /* ─── AST ────────────────────────────────────────────────────────────── */
@@ -134,21 +123,23 @@ export abstract class AbstractLambda<S extends LambdaShape> extends Grammar<S> {
 
   @rule
   get exprProd(): Parser<S["expr"]> {
-    return this.or(this.letProd, this.lambdaProd, this.appProd);
+    return or(this.letProd, this.lambdaProd, this.appProd);
   }
 
   @rule
   protected get letProd(): Parser<S["expr"]> {
-    return this.seq(
-      this.kw("let"),
+    // `ws1` is used explicitly where at least one space is required (after
+    // keywords, before the body); `ws` (zero-or-more) suffices elsewhere.
+    return seq(
+      literal("let"),
       this.ws1,
       this.ident,
       this.ws,
-      this.char("="),
+      char("="),
       this.ws,
       this.exprProd,
       this.ws1,
-      this.kw("in"),
+      literal("in"),
       this.ws1,
       this.exprProd,
     ).map(([, , name, , , , def, , , , body]) => this.let_(name, def, body));
@@ -156,20 +147,20 @@ export abstract class AbstractLambda<S extends LambdaShape> extends Grammar<S> {
 
   @rule
   protected get lambdaProd(): Parser<S["expr"]> {
-    return this.seq(
+    // `sseq` auto-inserts `ws` (zero-or-more) between terms — no manual
+    // `this.ws` threading needed between the head, param, dot, and body.
+    return this.sseq(
       this.lambdaHead,
       this.ident,
-      this.ws,
-      this.char("."),
-      this.ws,
+      char("."),
       this.exprProd,
-    ).map(([, param, , , , body]) => this.lam(param, body));
+    ).map(([, param, , body]) => this.lam(param, body));
   }
 
   @rule
   protected get appProd(): Parser<S["expr"]> {
-    return this.or(
-      this.seq(this.appProd, this.ws1, this.atomProd)
+    return or(
+      seq(this.appProd, this.ws1, this.atomProd)
         .map(([fn, , arg]) => this.app(fn, arg)),
       this.atomProd as Parser<S["expr"]>,
     );
@@ -177,73 +168,41 @@ export abstract class AbstractLambda<S extends LambdaShape> extends Grammar<S> {
 
   @rule
   protected get atomProd(): Parser<S["atom"]> {
-    return this.or(
-      this.seq(this.char("("), this.ws, this.exprProd, this.ws, this.char(")"))
-        .map(([, , e]) => this.paren(e)),
+    // `sseq` auto-inserts `ws` between terms — no manual `this.ws` threading.
+    return or(
+      this.sseq(char("("), this.exprProd, char(")"))
+        .map(([, e]) => this.paren(e)),
       this.ident.map((name) => this.varRef(name)),
     );
   }
 
   /* ── lexemes ─────────────────────────────────────────────────────── */
+  //
+  // `ident`, `ws`, and `ws1` now come from the shared lexeme library
+  // (`src/lexemes.ts`).  The reserved-word guard for `let`/`in` is handled
+  // by `keyword()` in the `letProd` production above, so `ident` itself is
+  // a plain identifier — no inline `.chain()` check needed here.
 
   @rule
   protected get ident(): Parser<string> {
-    return this.seq(this.identFirst, this.identRest)
-      .map(([h, t]) => h + t)
-      .chain((name) => {
-        if (name === "let" || name === "in") {
-          return this.empty() as unknown as Parser<string>;
-        }
-        return this.epsilon(name);
-      })
-      .map(([name]) => name);
-  }
-
-  protected get identFirst(): Parser<string> {
-    return this.pred((c) => c >= "a" && c <= "z", "<letter>");
-  }
-
-  @rule
-  protected get identRest(): Parser<string> {
-    return this.or(
-      this.seq(this.identChar, this.identRest).map(([c, cs]) => c + cs),
-      this.epsilon(""),
-    );
-  }
-
-  protected get identChar(): Parser<string> {
-    return this.pred(
-      (c) => (c >= "a" && c <= "z") || (c >= "0" && c <= "9") || c === "_",
-      "<id-char>",
-    );
+    return identLexeme().chain((name) => {
+      if (name === "let" || name === "in") return empty<string>();
+      return epsilon(name);
+    }).map(([, name]) => name);
   }
 
   protected get lambdaHead(): Parser<string> {
-    return this.or(this.char("λ"), this.char("\\"));
-  }
-
-  protected kw(word: string): Parser<string> {
-    return this.literal(word);
-  }
-
-  protected get wsChar(): Parser<string> {
-    return this.pred(
-      (c) => c === " " || c === "\t" || c === "\n" || c === "\r",
-      "<ws>",
-    );
+    return or(char("λ"), char("\\"));
   }
 
   @rule
-  protected get ws(): Parser<string> {
-    return this.or(
-      this.seq(this.wsChar, this.ws).map(([c, cs]) => c + cs),
-      this.epsilon(""),
-    );
+  protected override get ws(): Parser<string> {
+    return wsLexeme();
   }
 
   @rule
   protected get ws1(): Parser<string> {
-    return this.seq(this.wsChar, this.ws).map(([c, cs]) => c + cs);
+    return ws1Lexeme();
   }
 }
 
@@ -269,10 +228,7 @@ export class LambdaAST extends AbstractLambda<{ expr: UTTerm; atom: UTTerm }> {
 
 /* ─── Evaluator (multi-pass) ─────────────────────────────────────────── */
 
-/**
- * Call-by-value evaluator.  The evaluation judgment `ρ ⊢ e ⇓ v` as a
- * syntax-directed recursive function over the AST.
- */
+/** Call-by-value evaluation judgment `ρ ⊢ e ⇓ v` as a syntax-directed recursive function. */
 export function lambdaEval(term: UTTerm, env: UTValEnv): UTValue {
   if (term instanceof UTVar) {
     const v = env.lookup(term.name);
@@ -295,4 +251,20 @@ export function lambdaEval(term: UTTerm, env: UTValEnv): UTValue {
     return lambdaEval(term.body, env.extend(term.name, defVal));
   }
   throw new Error(`unknown term`);
+}
+
+/** Multi-pass evaluator: parses to AST via `super`, then evaluates with `lambdaEval`. */
+export class LambdaEval extends LambdaAST {
+  parseWith(input: string, env: UTValEnv): Set<UTValue> {
+    const asts = [...this._parseWith(input, this.start())];
+    const results = new Set<UTValue>();
+    for (const ast of asts) {
+      try {
+        results.add(lambdaEval(ast, env));
+      } catch {
+        // stuck term — skip
+      }
+    }
+    return results;
+  }
 }

@@ -2,9 +2,9 @@
  * Runnable demo for untyped lambda calculus evaluator.
  */
 
-import { LambdaAST, lambdaEval, UTClosure, UTValEnv } from "./lambda-eval.ts";
+import { LambdaEval, UTClosure, UTValEnv } from "./lambda-eval.ts";
 
-const g = new LambdaAST();
+const g = new LambdaEval();
 
 const cases = [
   "\\x.x",
@@ -13,17 +13,12 @@ const cases = [
 ];
 
 for (const src of cases) {
-  const asts = [...g.parse(src)];
-  if (asts.length === 0) {
+  const results = [...g.parseWith(src, UTValEnv.empty())];
+  if (results.length === 0) {
     console.log(`  ${src.padEnd(35)} → PARSE FAILED`);
     continue;
   }
-  const ast = asts[0]!;
-  try {
-    const v = lambdaEval(ast, UTValEnv.empty());
-    const desc = v instanceof UTClosure ? `<closure ${v.param}>` : String(v);
-    console.log(`  ${src.padEnd(35)} ⇓ ${desc}`);
-  } catch (e) {
-    console.log(`  ${src.padEnd(35)} → ERROR: ${(e as Error).message}`);
-  }
+  const v = results[0]!;
+  const desc = v instanceof UTClosure ? `<closure ${v.param}>` : String(v);
+  console.log(`  ${src.padEnd(35)} ⇓ ${desc}`);
 }

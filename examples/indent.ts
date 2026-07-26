@@ -1,32 +1,15 @@
-/**
- * Significant-whitespace (indentation-sensitive) grammar.
- *
- * Demonstrates `@rule` METHODS (parameterised productions) rather than
- * `@rule` getters.  Each indent level creates its own `DelayedExp` slot so
- * the parser can distinguish blocks nested at different depths.
- *
- * Language — a minimal "property list" with nested blocks:
- *
- *   name: Alice
- *   address:
- *     street: 1 Main St
- *     city: Wonderland
- *   age: 30
- *
- * Grammar sketch (D = indent depth in spaces):
- *
- *   doc          ::= block(0) EOF
- *   block(D)     ::= line(D)+
- *   line(D)      ::= spaces(D) key ':' ' ' value '\n'   (leaf)
- *                  | spaces(D) key ':' '\n' block(D+2)   (nested)
- *   key / value  ::= [a-zA-Z0-9 ]+
- *   spaces(D)    ::= ' '{D}                              (exact indent)
- *
- * The `span` parameter passed to every `.map()` callback is used to attach
- * source positions to every parsed node.
- */
+/** Indentation-sensitive grammar with parameterised `block(depth)` productions. See the README for usage. */
 
-import { Grammar, rule } from "../src/index.ts";
+import {
+  char,
+  epsilon,
+  Grammar,
+  literal,
+  or,
+  pred,
+  rule,
+  seq,
+} from "../src/index.ts";
 import type { Parser, Span } from "../src/index.ts";
 
 /* ─── AST ─────────────────────────────────────────────────────────── */
@@ -68,7 +51,7 @@ class IndentGrammar extends Grammar<IndentShape> {
   /** A block at indent depth `depth`: one or more lines at that depth. */
   @rule
   block(depth: number): Parser<Node[]> {
-    return this.seq(this.line(depth), this.block(depth).opt())
+    return seq(this.line(depth), this.block(depth).opt())
       .map(([first, rest]) => [first, ...(rest ?? [])]);
   }
 
@@ -80,12 +63,12 @@ class IndentGrammar extends Grammar<IndentShape> {
    */
   @rule
   line(depth: number): Parser<Node> {
-    const leaf: Parser<Node> = this.seq(
+    const leaf: Parser<Node> = seq(
       this.spaces(depth),
       this.key,
-      this.literal(": "),
+      literal(": "),
       this.value,
-      this.char("\n"),
+      char("\n"),
     ).map(([, k, , v], span): Node => ({
       kind: "leaf",
       key: k,
@@ -93,10 +76,10 @@ class IndentGrammar extends Grammar<IndentShape> {
       span,
     }));
 
-    const branch: Parser<Node> = this.seq(
+    const branch: Parser<Node> = seq(
       this.spaces(depth),
       this.key,
-      this.literal(":\n"),
+      literal(":\n"),
       this.block(depth + 2),
     ).map(([, k, , children], span): Node => ({
       kind: "branch",
@@ -105,7 +88,7 @@ class IndentGrammar extends Grammar<IndentShape> {
       span,
     }));
 
-    return this.or(branch, leaf);
+    return or(branch, leaf);
   }
 
   /**
@@ -114,26 +97,26 @@ class IndentGrammar extends Grammar<IndentShape> {
    */
   @rule
   spaces(n: number): Parser<string> {
-    if (n === 0) return this.epsilon("");
-    return this.seq(this.char(" "), this.spaces(n - 1)).map(() => "");
+    if (n === 0) return epsilon("");
+    return seq(char(" "), this.spaces(n - 1)).map(() => "");
   }
 
   /** One or more word characters: [a-zA-Z0-9 ]+ (no colon, no newline). */
   @rule
   get key(): Parser<string> {
-    const wordChar = this.pred(
+    const wordChar = pred(
       (c) => /[a-zA-Z0-9 ]/.test(c) && c !== "\n",
       "<keychar>",
     );
-    return this.seq(wordChar, wordChar.many())
+    return seq(wordChar, wordChar.many())
       .map(([h, t]) => h + (t as string[]).join(""));
   }
 
   /** Value: any characters up to (but not including) newline. */
   @rule
   get value(): Parser<string> {
-    const nonNl = this.pred((c) => c !== "\n", "<valuechar>");
-    return this.seq(nonNl, nonNl.many())
+    const nonNl = pred((c) => c !== "\n", "<valuechar>");
+    return seq(nonNl, nonNl.many())
       .map(([h, t]) => h + (t as string[]).join(""));
   }
 }

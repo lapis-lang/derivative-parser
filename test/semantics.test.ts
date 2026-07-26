@@ -24,12 +24,7 @@ import {
   PropProof,
   PropTruth,
 } from "../examples/proplogic.ts";
-import {
-  LambdaAST,
-  lambdaEval,
-  UTClosure,
-  UTValEnv,
-} from "../examples/lambda-eval.ts";
+import { LambdaEval, UTClosure, UTValEnv } from "../examples/lambda-eval.ts";
 
 /* ── arith-var: inherited attributes (read-only env) ────────────────── */
 
@@ -231,25 +226,22 @@ Deno.test("PropProof — natural-deduction proofs", async (t) => {
 
 /* ── lambda-eval: untyped evaluation ─────────────────────────────────── */
 
-Deno.test("LambdaAST + lambdaEval — untyped evaluation", async (t) => {
-  const g = new LambdaAST();
+Deno.test("LambdaEval — untyped evaluation", async (t) => {
+  const g = new LambdaEval();
   const empty = UTValEnv.empty();
 
   await t.step("\\x.x evaluates to a closure", () => {
-    const [ast] = [...g.parse("\\x.x")];
-    const v = lambdaEval(ast, empty);
+    const [v] = [...g.parseWith("\\x.x", empty)];
     assert(v instanceof UTClosure);
     assertEquals(v.param, "x");
   });
   await t.step("let id = \\x.x in id id evaluates to a closure", () => {
-    const [ast] = [...g.parse("let id = \\x.x in id id")];
-    const v = lambdaEval(ast, empty);
+    const [v] = [...g.parseWith("let id = \\x.x in id id", empty)];
     assert(v instanceof UTClosure);
     assertEquals(v.param, "x");
   });
   await t.step("(\\x.\\y.x) (\\z.z) (\\w.w) evaluates to \\z.z", () => {
-    const [ast] = [...g.parse("(\\x.\\y.x) (\\z.z) (\\w.w)")];
-    const v = lambdaEval(ast, empty);
+    const [v] = [...g.parseWith("(\\x.\\y.x) (\\z.z) (\\w.w)", empty)];
     assert(v instanceof UTClosure);
     assertEquals(v.param, "z");
   });

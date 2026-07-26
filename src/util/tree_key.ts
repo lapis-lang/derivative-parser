@@ -1,15 +1,4 @@
-/**
- * Content-based keying for parse-tree values.
- *
- * Used by `@rule` method-form memoisation (to cache per-argument-tuple
- * slots) and — in the legacy derivative engine — by the least-fixed-point
- * solver to detect convergence on object/array trees.
- *
- * Falls back to a "<unkeyable@N>" key for non-JSON-serialisable values,
- * which means memoisation may not converge for grammars producing such
- * trees; documented limitation, easy to override per-grammar in a later
- * iteration.
- */
+/** Content-based keying for memoisation (used by `@rule` per-argument cache). */
 
 let _unkeyableCounter = 0;
 
