@@ -12,7 +12,6 @@ import {
   ident as identLexeme,
   literal,
   or,
-  requires,
   seq,
   ws as wsLexeme,
   ws1 as ws1Lexeme,
@@ -117,16 +116,49 @@ export interface LambdaShape {
   atom: unknown;
 }
 
+/**
+ * Base lambda grammar — productions, lexemes, and context threading.
+ *
+ * The semantic-action methods (`lam`, `app`, `let_`, `varRef`, `paren`) have
+ * **throwing default implementations**. They are reachable only via the base
+ * `lambdaProd`/`letProd`/`appProd`/`atomProd` productions. Subclasses that
+ * **override productions** (like `LambdaEval`) extend this class directly and
+ * never call the actions. Subclasses that **override actions** (like
+ * `LambdaAST`) extend {@link AbstractLambdaActions}, which re-declares the
+ * actions as abstract for compile-time safety.
+ */
 export abstract class AbstractLambda<S extends LambdaShape> extends Grammar<S> {
-  protected abstract lam(param: string, body: S["expr"]): S["expr"];
-  protected abstract app(fn: S["atom"], arg: S["atom"]): S["expr"];
-  protected abstract let_(
-    name: string,
-    def: S["expr"],
-    body: S["expr"],
-  ): S["expr"];
-  protected abstract varRef(name: string, ctx: unknown): S["atom"];
-  protected abstract paren(e: S["expr"]): S["atom"];
+  /* ── semantic actions (throwing defaults — overridden by action subclasses) ── */
+
+  protected lam(_param: string, _body: S["expr"]): S["expr"] {
+    throw new Error(
+      "lam() unreachable — override the action or the production",
+    );
+  }
+  protected app(_fn: S["atom"], _arg: S["atom"]): S["expr"] {
+    throw new Error(
+      "app() unreachable — override the action or the production",
+    );
+  }
+  protected let_(
+    _name: string,
+    _def: S["expr"],
+    _body: S["expr"],
+  ): S["expr"] {
+    throw new Error(
+      "let_() unreachable — override the action or the production",
+    );
+  }
+  protected varRef(_name: string, _ctx: unknown): S["atom"] {
+    throw new Error(
+      "varRef() unreachable — override the action or the production",
+    );
+  }
+  protected paren(_e: S["expr"]): S["atom"] {
+    throw new Error(
+      "paren() unreachable — override the action or the production",
+    );
+  }
 
   /** Context extension hook — default no-op (for `LambdaAST`). Semantic subclasses override. */
   protected extendCtx(ctx: unknown, _name: string): unknown {
@@ -223,9 +255,32 @@ export abstract class AbstractLambda<S extends LambdaShape> extends Grammar<S> {
   }
 }
 
+/**
+ * Action layer — re-declares the semantic actions as abstract for
+ * compile-time safety. Subclasses that **override actions** (not
+ * productions) extend this class: `LambdaAST`. They must implement every
+ * action, and the base productions call them.
+ *
+ * Subclasses that **override productions** (like `LambdaEval`) extend
+ * {@link AbstractLambda} directly, bypassing the actions entirely.
+ */
+export abstract class AbstractLambdaActions<S extends LambdaShape>
+  extends AbstractLambda<S> {
+  protected abstract override lam(param: string, body: S["expr"]): S["expr"];
+  protected abstract override app(fn: S["atom"], arg: S["atom"]): S["expr"];
+  protected abstract override let_(
+    name: string,
+    def: S["expr"],
+    body: S["expr"],
+  ): S["expr"];
+  protected abstract override varRef(name: string, ctx: unknown): S["atom"];
+  protected abstract override paren(e: S["expr"]): S["atom"];
+}
+
 /* ─── Concrete: AST builder ──────────────────────────────────────────── */
 
-export class LambdaAST extends AbstractLambda<{ expr: UTTerm; atom: UTTerm }> {
+export class LambdaAST
+  extends AbstractLambdaActions<{ expr: UTTerm; atom: UTTerm }> {
   override start(): Parser<UTTerm> {
     return this.exprProd(null);
   }
@@ -281,20 +336,7 @@ export class LambdaEval
     return (ctx as UTValEnv).extend(name, UT_PLACEHOLDER);
   }
 
-  /**
-   * Lam: `ρ ⊢ λx. body ⇓ ⟨x, bodySpan, ρ⟩`.
-   *
-   * This method is never called — `lambdaProd` is overridden to capture the
-   * body's span directly. The `@requires(() => false)` contract ensures that
-   * if the base `lambdaProd` were accidentally used, this method would
-   * gracefully produce no result rather than throw.
-   */
-  @requires((_self: LambdaEval, _param: string, _body: UTValue) => false)
-  protected lam(_param: string, _body: UTValue): UTValue {
-    return undefined as unknown as UTValue;
-  }
-
-  protected app(fn: UTValue, arg: UTValue): UTValue {
+  protected override app(fn: UTValue, arg: UTValue): UTValue {
     if (!(fn instanceof UTClosure)) {
       throw new Error(`cannot apply non-function`);
     }
@@ -314,28 +356,13 @@ export class LambdaEval
     }
   }
 
-  /**
-   * Let: `ρ ⊢ let x = def in body ⇓ v`.
-   *
-   * This method is never called — `letProd` is overridden to parse the body
-   * under the real env directly. The `@requires(() => false)` contract ensures
-   * that if the base `letProd` were accidentally used, this method would
-   * gracefully produce no result rather than throw.
-   */
-  @requires((_self: LambdaEval, _name: string, _def: UTValue, _body: UTValue) =>
-    false
-  )
-  protected let_(_name: string, _def: UTValue, _body: UTValue): UTValue {
-    return undefined as unknown as UTValue;
-  }
-
-  protected varRef(name: string, ctx: unknown): UTValue {
+  protected override varRef(name: string, ctx: unknown): UTValue {
     const v = (ctx as UTValEnv).lookup(name);
     if (v === undefined) throw new Error(`unbound variable: ${name}`);
     return v;
   }
 
-  protected paren(e: UTValue): UTValue {
+  protected override paren(e: UTValue): UTValue {
     return e;
   }
 

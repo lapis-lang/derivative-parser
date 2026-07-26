@@ -298,29 +298,64 @@ export interface STLCShape {
  * ====================================================================== */
 
 /**
- * Abstract STLC grammar.  `ctx` is inherited context (TypeEnv, ValEnv, or
- * null).  `chain` threads synthesized values into inherited context.
+ * Base STLC grammar — productions, lexemes, and context threading.
+ *
+ * `ctx` is inherited context (TypeEnv, ValEnv, or null).  `chain` threads
+ * synthesized values into inherited context.
+ *
+ * The semantic-action methods (`lam`, `app`, `let_`, `varRef`, `boolLit`,
+ * `intLit`, `paren`) have **throwing default implementations**. They are
+ * reachable only via the base `lambdaProd`/`letProd`/`appProd`/`atomProd`
+ * productions. Subclasses that **override productions** (like `STLCEval`)
+ * extend this class directly and never call the actions. Subclasses that
+ * **override actions** (like `STLCAST`, `STLCTypeCheck`) extend
+ * {@link AbstractSTLCActions}, which re-declares the actions as abstract for
+ * compile-time safety.
  */
 @invariant((self: AbstractSTLC<STLCShape>) => self.start() !== undefined)
 export abstract class AbstractSTLC<S extends STLCShape> extends Grammar<S> {
-  /* ── semantic actions ────────────────────────────────────────────── */
+  /* ── semantic actions (throwing defaults — overridden by action subclasses) ── */
 
-  protected abstract lam(
-    param: string,
-    type: Type,
-    body: S["expr"],
-  ): S["expr"];
-  protected abstract app(fn: S["atom"], arg: S["atom"]): S["expr"];
-  protected abstract let_(
-    name: string,
-    type: Type,
-    def: S["expr"],
-    body: S["expr"],
-  ): S["expr"];
-  protected abstract varRef(name: string, ctx: unknown): S["atom"];
-  protected abstract boolLit(b: boolean): S["atom"];
-  protected abstract intLit(n: number): S["atom"];
-  protected abstract paren(e: S["expr"]): S["atom"];
+  protected lam(_param: string, _type: Type, _body: S["expr"]): S["expr"] {
+    throw new Error(
+      "lam() unreachable — override the action or the production",
+    );
+  }
+  protected app(_fn: S["atom"], _arg: S["atom"]): S["expr"] {
+    throw new Error(
+      "app() unreachable — override the action or the production",
+    );
+  }
+  protected let_(
+    _name: string,
+    _type: Type,
+    _def: S["expr"],
+    _body: S["expr"],
+  ): S["expr"] {
+    throw new Error(
+      "let_() unreachable — override the action or the production",
+    );
+  }
+  protected varRef(_name: string, _ctx: unknown): S["atom"] {
+    throw new Error(
+      "varRef() unreachable — override the action or the production",
+    );
+  }
+  protected boolLit(_b: boolean): S["atom"] {
+    throw new Error(
+      "boolLit() unreachable — override the action or the production",
+    );
+  }
+  protected intLit(_n: number): S["atom"] {
+    throw new Error(
+      "intLit() unreachable — override the action or the production",
+    );
+  }
+  protected paren(_e: S["expr"]): S["atom"] {
+    throw new Error(
+      "paren() unreachable — override the action or the production",
+    );
+  }
 
   /* ── type production (shared — always returns Type) ──────────────── */
 
@@ -502,12 +537,41 @@ export abstract class AbstractSTLC<S extends STLCShape> extends Grammar<S> {
   }
 }
 
+/**
+ * Action layer — re-declares the semantic actions as abstract for
+ * compile-time safety. Subclasses that **override actions** (not
+ * productions) extend this class: `STLCAST`, `STLCTypeCheck`, `STLCTyped`.
+ * They must implement every action, and the base productions call them.
+ *
+ * Subclasses that **override productions** (like `STLCEval`) extend
+ * {@link AbstractSTLC} directly, bypassing the actions entirely.
+ */
+export abstract class AbstractSTLCActions<S extends STLCShape>
+  extends AbstractSTLC<S> {
+  protected abstract override lam(
+    param: string,
+    type: Type,
+    body: S["expr"],
+  ): S["expr"];
+  protected abstract override app(fn: S["atom"], arg: S["atom"]): S["expr"];
+  protected abstract override let_(
+    name: string,
+    type: Type,
+    def: S["expr"],
+    body: S["expr"],
+  ): S["expr"];
+  protected abstract override varRef(name: string, ctx: unknown): S["atom"];
+  protected abstract override boolLit(b: boolean): S["atom"];
+  protected abstract override intLit(n: number): S["atom"];
+  protected abstract override paren(e: S["expr"]): S["atom"];
+}
+
 /* ======================================================================
  *  Concrete: AST builder (no context)
  * ====================================================================== */
 
 export class STLCAST
-  extends AbstractSTLC<{ expr: Term; atom: Term; type: Type }> {
+  extends AbstractSTLCActions<{ expr: Term; atom: Term; type: Type }> {
   override start(): Parser<Term> {
     return this.exprProd(null);
   }
@@ -544,7 +608,7 @@ export class STLCAST
  * Ill-typed terms produce an empty parse forest.
  */
 export class STLCTypeCheck
-  extends AbstractSTLC<{ expr: Type; atom: Type; type: Type }> {
+  extends AbstractSTLCActions<{ expr: Type; atom: Type; type: Type }> {
   parseWith(input: string, env: TypeEnv): Set<Type> {
     return this._parseWith(input, this.exprProd(env));
   }
@@ -682,27 +746,12 @@ export class STLCEval
   }
 
   /**
-   * Lam: `ρ ⊢ λx:τ. body ⇓ ⟨x, τ, bodySpan, ρ⟩`.
-   *
-   * This method is never called — `lambdaProd` is overridden to capture the
-   * body's span directly. The `@requires(() => false)` contract ensures that
-   * if the base `lambdaProd` were accidentally used, this method would
-   * gracefully produce no result (empty parse forest) rather than throw.
-   */
-  @requires((_self: STLCEval, _param: string, _type: Type, _body: Value) =>
-    false
-  )
-  protected lam(_param: string, _type: Type, _body: Value): Value {
-    return undefined as unknown as Value;
-  }
-
-  /**
    * App: `ρ ⊢ e₁ e₂ ⇓ v` where `ρ ⊢ e₁ ⇓ ⟨x,τ,span,ρ'⟩`, `ρ ⊢ e₂ ⇓ v₂`,
    * and `ρ' ⊢ body[x:=v₂] ⇓ v`.  The body re-evaluation re-parses the
    * closure's body substring under `ρ'.extend(x, v₂)` — the higher-order
    * attribute.
    */
-  protected app(fn: Value, arg: Value): Value {
+  protected override app(fn: Value, arg: Value): Value {
     if (!(fn instanceof Closure)) throw new Error(`cannot apply non-function`);
     const bodyEnv = fn.env.extend(fn.param, arg);
     // Re-parse the body substring under bodyEnv. Save/restore _inputOffset
@@ -722,37 +771,18 @@ export class STLCEval
     }
   }
 
-  /**
-   * Let: `ρ ⊢ let x:τ = def in body ⇓ v` where `ρ ⊢ def ⇓ v₁`, `ρ ⊢ body[x:=v₁] ⇓ v`.
-   *
-   * This method is never called — `letProd` is overridden to parse the body
-   * under the real env directly. The `@requires(() => false)` contract ensures
-   * that if the base `letProd` were accidentally used, this method would
-   * gracefully produce no result rather than throw.
-   */
-  @requires((
-    _self: STLCEval,
-    _name: string,
-    _type: Type,
-    _def: Value,
-    _body: Value,
-  ) => false)
-  protected let_(_name: string, _type: Type, _def: Value, _body: Value): Value {
-    return undefined as unknown as Value;
-  }
-
-  protected varRef(name: string, ctx: unknown): Value {
+  protected override varRef(name: string, ctx: unknown): Value {
     const v = (ctx as ValEnv).lookup(name);
     if (v === undefined) throw new Error(`unbound variable: ${name}`);
     return v;
   }
-  protected boolLit(b: boolean): Value {
+  protected override boolLit(b: boolean): Value {
     return b;
   }
-  protected intLit(n: number): Value {
+  protected override intLit(n: number): Value {
     return n;
   }
-  protected paren(e: Value): Value {
+  protected override paren(e: Value): Value {
     return e;
   }
 
@@ -841,8 +871,9 @@ export class STLCEval
  * ====================================================================== */
 
 /** Proof-bearing type checker — returns `TypedTerm` carrying derived types and sub-derivations. */
-export class STLCTyped
-  extends AbstractSTLC<{ expr: TypedTerm; atom: TypedTerm; type: Type }> {
+export class STLCTyped extends AbstractSTLCActions<
+  { expr: TypedTerm; atom: TypedTerm; type: Type }
+> {
   parseWith(input: string, env: TypeEnv): Set<TypedTerm> {
     return this._parseWith(input, this.exprProd(env));
   }
