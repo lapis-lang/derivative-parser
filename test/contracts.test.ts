@@ -282,10 +282,10 @@ Deno.test("@ensures — throws ContractError when postcondition fails", () => {
 Deno.test("@ensures — `old` snapshot reflects pre-call state", () => {
   const capturedOldN: { value: number | null } = { value: null };
   class OldDemo extends ContractedGrammar {
-    // Public data field so `OldSnapshot<OldDemo>` exposes it typed.
-    // (Mapped types can't surface protected/private keys as public —
-    // a TypeScript limitation. The runtime snapshot copies them too;
-    // see the "protected field" test below.)
+    // Public data field so `OldSnapshot<OldDemo>` exposes it as a required
+    // (non-optional) key. (Mapped types can't surface protected/private
+    // keys as public — a TypeScript limitation. The runtime snapshot copies
+    // them too; see the "protected field" test below.)
     n = 10;
     @ensures((self: OldDemo, _args, old) => {
       capturedOldN.value = old.n;
@@ -329,6 +329,40 @@ Deno.test("@ensures — `old` excludes getters and methods (data-only snapshot)"
   assertEquals(seenKeys.value.includes("data"), true);
   assertEquals(seenKeys.value.includes("computed"), false);
   assertEquals(seenKeys.value.includes("bump"), false);
+});
+
+Deno.test("@ensures — `old` copies arrow-function fields (present at runtime, optional in type)", () => {
+  // Arrow-function fields are own enumerable *data* properties, so
+  // `snapshotOld` copies them at runtime. But TypeScript can't distinguish
+  // them from prototype methods at the type level, so `OldSnapshot` marks
+  // function-valued keys *optional* (`T | undefined`). This test verifies
+  // the runtime presence and the optional typing.
+  const capturedArrow: { value: (() => number) | null } = { value: null };
+  class ArrowDemo extends ContractedGrammar {
+    data = 1;
+    arrow = () => this.data * 2;
+    @ensures((_self, _args, old) => {
+      // `old.arrow` is typed as `(() => number) | undefined` — optional.
+      // At runtime it's present (own enumerable data prop). Narrow before
+      // using, as a consumer would.
+      const fn = old.arrow;
+      if (typeof fn === "function") {
+        capturedArrow.value = fn as () => number;
+      }
+      return true;
+    })
+    bump(): void {
+      this.data++;
+    }
+  }
+  const d = new ArrowDemo();
+  d.bump();
+  // The arrow field was copied into the snapshot.
+  assertEquals(typeof capturedArrow.value, "function");
+  // The arrow closes over `this.data`; by the time we call it, `data` has
+  // been bumped to 2, so it returns 2 * 2 = 4. (The snapshot copies the
+  // function *reference*, not a bound value — arrows capture `this` live.)
+  assertEquals(capturedArrow.value!(), 4);
 });
 
 Deno.test("@ensures — infers args tuple and result type from the method", () => {

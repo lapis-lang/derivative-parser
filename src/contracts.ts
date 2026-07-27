@@ -210,22 +210,49 @@ export type InvariantPredicate<This = unknown> = (self: This) => boolean;
 type AnyFn = (...args: any[]) => unknown;
 
 /**
- * The keys of `This` whose *own enumerable string-keyed* values are not
- * functions — i.e. the data fields that {@link snapshotOld} actually copies.
- * Prototype methods and getters are excluded (they are not own properties,
- * so `Object.keys` never returns them).
+ * The keys of `This` whose values are *not* functions — i.e. the data
+ * fields that {@link snapshotOld} copies as own enumerable string-keyed
+ * properties. Prototype methods and getters are not own properties, so
+ * `Object.keys` never returns them; arrow-function fields *are* own data
+ * properties and are copied, but they are function-valued so they appear
+ * in {@link FnKeys} instead (see {@link OldSnapshot}).
  */
-type DataKeys<This> = {
-  [K in keyof This]-?: This[K] extends (...a: never[]) => unknown ? never : K;
-}[keyof This] & (string | symbol);
+type DataKeys<This> =
+  & {
+    [K in keyof This]-?: This[K] extends (...a: never[]) => unknown ? never : K;
+  }[keyof This]
+  & (string | symbol);
+
+/**
+ * The keys of `This` whose values *are* functions. These cover both
+ * prototype methods (absent from the runtime snapshot — not own props) and
+ * arrow-function fields (present in the runtime snapshot — own enumerable
+ * data props). TypeScript cannot distinguish the two at the type level, so
+ * {@link OldSnapshot} marks them *optional* to stay honest.
+ */
+type FnKeys<This> =
+  & {
+    [K in keyof This]-?: This[K] extends (...a: never[]) => unknown ? K : never;
+  }[keyof This]
+  & (string | symbol);
 
 /**
  * Honest shape of the `old` value passed to `@ensures` predicates: a plain
- * object holding the own enumerable string-keyed *data* properties of `This`
- * as they were before the method body ran. Methods and getters are absent
- * (they are not copied by {@link snapshotOld}).
+ * object holding the own enumerable string-keyed properties of `This` as
+ * they were before the method body ran.
+ *
+ * - **Data fields** (non-function-valued own props) are *required* — they
+ *   are always copied by {@link snapshotOld}.
+ * - **Function-valued keys** (methods, getters, arrow-function fields) are
+ *   *optional* — TypeScript cannot distinguish own arrow-function fields
+ *   (present at runtime) from prototype methods/getters (absent at
+ *   runtime), so the type is honest about the uncertainty. Accessing such
+ *   a key yields `T | undefined`; narrow with `instanceof` or a truthiness
+ *   check if you need to call it.
  */
-export type OldSnapshot<This> = { [K in DataKeys<This>]: This[K] };
+export type OldSnapshot<This> =
+  & { [K in DataKeys<This>]: This[K] }
+  & { [K in FnKeys<This>]?: This[K] };
 
 /**
  * A precondition predicate: `(self, ...args) => boolean`.
