@@ -11,8 +11,8 @@ import {
   _markProduction,
   assertInvariants,
   collectMetadata,
-  type ContractMetadataReport,
   type ContractMeta,
+  type ContractMetadataReport,
   metaOn,
   wrapWithContracts,
 } from "./contracts.ts";

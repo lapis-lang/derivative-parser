@@ -633,7 +633,8 @@ export class STLCTypeCheck
       rule: "T-Abs",
       role: "conclusion",
       formula: "result : σ → τ",
-      description: "the abstraction has a function type from the parameter's type to the body's type",
+      description:
+        "the abstraction has a function type from the parameter's type to the body's type",
     },
   )
   protected lam(_param: string, type: Type, body: Type): Type {

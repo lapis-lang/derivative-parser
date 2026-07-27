@@ -269,8 +269,9 @@ export function* chainMetadataOfClass(
   while (ctor && ctor !== Object.prototype.constructor) {
     const meta = metadataOf(ctor);
     if (meta) yield meta;
-    ctor = Object.getPrototypeOf(ctor) as
-      abstract new (...args: unknown[]) => unknown;
+    ctor = Object.getPrototypeOf(ctor) as abstract new (
+      ...args: unknown[]
+    ) => unknown;
   }
 }
 

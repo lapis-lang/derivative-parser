@@ -97,7 +97,9 @@ console.log("\n— STLCTypeCheck.metadata (reflective contract metadata) —");
 // is the author's choice — the library imposes no schema.
 const report = STLCTypeCheck.metadata;
 for (const [name, entry] of Object.entries(report.methods)) {
-  if (entry.requires.length === 0 && entry.ensures.length === 0 && !entry.isRule) {
+  if (
+    entry.requires.length === 0 && entry.ensures.length === 0 && !entry.isRule
+  ) {
     continue;
   }
   console.log(`  ${name}:`);
@@ -119,6 +121,10 @@ for (const [name, entry] of Object.entries(report.methods)) {
 // application: TFun(Int, Int) applied to Int.
 const appRequires = report.methods.app?.requires[0];
 if (appRequires) {
-  const ok = appRequires.predicate(tc, new TFun(new TVar("Int"), new TVar("Int")), new TVar("Int"));
+  const ok = appRequires.predicate(
+    tc,
+    new TFun(new TVar("Int"), new TVar("Int")),
+    new TVar("Int"),
+  );
   console.log(`  reflectively invoking T-App @requires predicate → ${ok}`);
 }

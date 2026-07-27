@@ -57,9 +57,9 @@ export {
   setCheckedMode,
 } from "./contracts.ts";
 export type {
+  ContractMeta,
   ContractMetadata,
   ContractMetadataReport,
-  ContractMeta,
   EnsuresContract,
   EnsuresPredicate,
   InvariantContract,
