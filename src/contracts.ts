@@ -125,17 +125,64 @@ function withoutChecks<T>(instance: object, fn: () => T): T {
  * ====================================================================== */
 //
 // Subcontracting: @invariant AND-ed, @requires OR-ed, @ensures AND-ed across inheritance.
+//
+// Each contract is stored as a `{ predicate, meta? }` pair so that the
+// executable predicate and the declarative metadata are co-located and
+// cannot drift apart. Both are exposed reflectively via `collectMetadata`.
+
+/**
+ * Arbitrary, schema-less metadata attached to a contract via the optional
+ * second argument of `@requires` / `@ensures` / `@invariant` / `@rule`.
+ *
+ * The library imposes no structure on this object — it stores and
+ * round-trips it opaquely. Authors choose their own keys (e.g.
+ * `{ rule: "T-App", formula: "..." }` for a PL grammar, or entirely
+ * different keys for a JSON/CSV grammar). Downstream tooling reads
+ * whatever keys the author established.
+ */
+export type ContractMeta = Record<string, unknown>;
+
+/** A `@requires` precondition paired with its optional declarative metadata. */
+export interface RequiresContract {
+  /** Executable predicate — the runtime check. */
+  predicate: RequiresPredicate;
+  /** Declarative metadata supplied via `@requires(pred, meta)`. */
+  meta?: ContractMeta;
+}
+
+/** A `@ensures` postcondition paired with its optional declarative metadata. */
+export interface EnsuresContract {
+  /** Executable predicate — the runtime check. */
+  predicate: EnsuresPredicate;
+  /** Declarative metadata supplied via `@ensures(pred, meta)`. */
+  meta?: ContractMeta;
+}
+
+/** A `@invariant` class invariant paired with its optional declarative metadata. */
+export interface InvariantContract {
+  /** Executable predicate — the runtime check. */
+  predicate: InvariantPredicate;
+  /** Declarative metadata supplied via `@invariant(pred, meta)`. */
+  meta?: ContractMeta;
+}
 
 /** Metadata shape stored on each contracted class via `Symbol.metadata`. */
 export interface ContractMetadata {
   /** Class invariants — AND-ed across the inheritance chain. */
-  invariants: InvariantPredicate[];
+  invariants: InvariantContract[];
   /** Per-feature preconditions — OR-ed across the inheritance chain. */
-  requires: Record<PropertyKey, RequiresPredicate[]>;
+  requires: Record<PropertyKey, RequiresContract[]>;
   /** Per-feature postconditions — AND-ed across the inheritance chain. */
-  ensures: Record<PropertyKey, EnsuresPredicate[]>;
+  ensures: Record<PropertyKey, EnsuresContract[]>;
   /** Per-feature rescue handlers — inherited unless overridden. */
   rescue: Record<PropertyKey, RescueHandler>;
+  /**
+   * Per-feature `@rule` production metadata — set by `Grammar`'s `@rule`
+   * decorator. The value is the `meta` object passed to `@rule(meta)`, or
+   * `undefined` for a bare `@rule`. Presence of a key (even `undefined`)
+   * marks the feature as a production (`isRule: true` in the report).
+   */
+  ruleMeta: Record<PropertyKey, ContractMeta | undefined>;
 }
 
 /**
@@ -148,16 +195,25 @@ const CONTRACTS = Symbol.for("@lapis-lang/zipper-grammar/contracts");
 /**
  * Retrieve (or initialise) the {@link ContractMetadata} stored on a given
  * `Symbol.metadata` object (the `ctx.metadata` passed to a decorator).
+ *
+ * A subclass's `Symbol.metadata` prototypically inherits from its parent's
+ * (per the TC39 decorator metadata spec), so a naive `store[CONTRACTS]`
+ * lookup would find the *parent's* `ContractMetadata` via the prototype
+ * chain and mutate it — corrupting the parent and double-counting contracts
+ * in the chain walk. We therefore check for an **own** property and create
+ * a fresh per-class `ContractMetadata` when absent.
  */
-function metaOn(symMeta: object): ContractMetadata {
+export function metaOn(symMeta: object): ContractMetadata {
   const store = symMeta as Record<symbol, unknown>;
-  const existing = store[CONTRACTS] as ContractMetadata | undefined;
-  if (existing) return existing;
+  if (Object.prototype.hasOwnProperty.call(store, CONTRACTS)) {
+    return store[CONTRACTS] as ContractMetadata;
+  }
   const fresh: ContractMetadata = {
     invariants: [],
     requires: {},
     ensures: {},
     rescue: {},
+    ruleMeta: {},
   };
   store[CONTRACTS] = fresh;
   return fresh;
@@ -168,7 +224,7 @@ function metaOn(symMeta: object): ContractMetadata {
  * constructor's `Symbol.metadata`. Returns `undefined` if the class has no
  * metadata object (e.g. it was never decorated).
  */
-function metadataOf(
+export function metadataOf(
   Class: abstract new (...args: unknown[]) => unknown,
 ): ContractMetadata | undefined {
   const symMeta = (Class as unknown as { [Symbol.metadata]?: object })[
@@ -181,9 +237,11 @@ function metadataOf(
 /**
  * Walk the prototype chain of `instance`'s class and collect every
  * `ContractMetadata` (most-derived first). Used to evaluate inherited
- * contracts for subcontracting.
+ * contracts for subcontracting and to aggregate reflective metadata.
  */
-function* chainMetadata(instance: object): Generator<ContractMetadata> {
+export function* chainMetadata(
+  instance: object,
+): Generator<ContractMetadata> {
   let proto = Object.getPrototypeOf(instance);
   while (proto && proto !== Object.prototype) {
     const meta = metadataOf(
@@ -191,6 +249,28 @@ function* chainMetadata(instance: object): Generator<ContractMetadata> {
     );
     if (meta) yield meta;
     proto = Object.getPrototypeOf(proto);
+  }
+}
+
+/**
+ * Walk the constructor chain of `Class` (most-derived first) and collect
+ * every `ContractMetadata`. Unlike {@link chainMetadata} (which starts
+ * from an instance's prototype), this starts from `Class` itself — used by
+ * the static `Grammar.metadata` getter so the class's own contracts are
+ * included.
+ */
+export function* chainMetadataOfClass(
+  Class: abstract new (...args: unknown[]) => unknown,
+): Generator<ContractMetadata> {
+  let ctor: abstract new (...args: unknown[]) => unknown = Class;
+  // Walk the constructor chain most-derived first, stopping at `Function`
+  // (the root constructor, i.e. `Object.prototype.constructor`) — beyond
+  // it lies `Function.prototype` which has no contract metadata.
+  while (ctor && ctor !== Object.prototype.constructor) {
+    const meta = metadataOf(ctor);
+    if (meta) yield meta;
+    ctor = Object.getPrototypeOf(ctor) as
+      abstract new (...args: unknown[]) => unknown;
   }
 }
 
@@ -299,37 +379,45 @@ export function invariant<
   This extends abstract new (...args: unknown[]) => unknown,
 >(
   predicate: InvariantPredicate<InstanceType<This>>,
+  meta?: ContractMeta,
 ): (value: This, ctx: ClassDecoratorContext<This>) => This {
+  const metaArg = meta;
   return (value, ctx) => {
     if (ctx.kind !== "class") {
       throw new ContractError("@invariant can only decorate a class");
     }
-    ctx.addInitializer(function (this: This) {
-      const meta = metaOn(ctx.metadata);
-      meta.invariants = [...meta.invariants, predicate as InvariantPredicate];
-    });
+    // Write to the class's Symbol.metadata directly in the decorator body
+    // so the metadata is available statically (without instantiation).
+    const store = metaOn(ctx.metadata);
+    store.invariants = [
+      ...store.invariants,
+      { predicate: predicate as InvariantPredicate, meta: metaArg },
+    ];
     return value;
   };
 }
 
 /**
- * Append `predicate` to the named `table` (`requires` / `ensures`) under
- * `key`, creating the array if absent. Shared by `@requires` / `@ensures`.
+ * Append a `{ predicate, meta? }` pair to the named `table` (`requires` /
+ * `ensures`) under `key`, creating the array if absent. Shared by
+ * `@requires` / `@ensures`.
  */
 function registerPredicate(
   meta: ContractMetadata,
   table: "requires" | "ensures",
   key: PropertyKey,
   predicate: RequiresPredicate | EnsuresPredicate,
+  metaObj?: ContractMeta,
 ): void {
   const existing = meta[table][key] ?? [];
-  meta[table][key] = [...existing, predicate];
+  meta[table][key] = [...existing, { predicate, meta: metaObj }];
 }
 
 /**
  * Collect every predicate declared for `prop` under `table` across the
  * whole inheritance chain (most-derived first). Shared by the Proxy
- * `get` trap and `assertInvariants`.
+ * `get` trap and `assertInvariants`. Yields the executable predicate from
+ * each `{ predicate, meta? }` pair.
  */
 function* collectPredicates(
   target: object,
@@ -337,10 +425,11 @@ function* collectPredicates(
   prop?: PropertyKey,
 ): Generator<RequiresPredicate | EnsuresPredicate | InvariantPredicate> {
   for (const meta of chainMetadata(target)) {
-    const preds = prop === undefined
+    const contracts = prop === undefined
       ? meta.invariants
-      : (meta[table] as Record<PropertyKey, unknown[]>)[prop] ?? [];
-    for (const p of preds) yield p as RequiresPredicate;
+      : (meta[table] as Record<PropertyKey, { predicate: unknown }[]>)[prop] ??
+        [];
+    for (const c of contracts) yield c.predicate as RequiresPredicate;
   }
 }
 
@@ -409,22 +498,25 @@ export function requires<
   M extends AnyFn = AnyFn,
 >(
   predicate: RequiresPredicate<This, M>,
+  meta?: ContractMeta,
 ): (
   target: M,
   ctx: ClassMethodDecoratorContext<This, M>,
 ) => void {
+  const metaArg = meta;
   return (_target, ctx) => {
     if (ctx.kind !== "method") {
       throw new ContractError("@requires can only decorate a method");
     }
-    ctx.addInitializer(function (this: This) {
-      registerPredicate(
-        metaOn(ctx.metadata),
-        "requires",
-        ctx.name,
-        predicate as RequiresPredicate,
-      );
-    });
+    // Write to the class's Symbol.metadata directly in the decorator body
+    // so the metadata is available statically (without instantiation).
+    registerPredicate(
+      metaOn(ctx.metadata),
+      "requires",
+      ctx.name,
+      predicate as RequiresPredicate,
+      metaArg,
+    );
   };
 }
 
@@ -443,22 +535,25 @@ export function ensures<
   M extends AnyFn = AnyFn,
 >(
   predicate: EnsuresPredicate<This, M>,
+  meta?: ContractMeta,
 ): (
   target: M,
   ctx: ClassMethodDecoratorContext<This, M>,
 ) => void {
+  const metaArg = meta;
   return (_target, ctx) => {
     if (ctx.kind !== "method") {
       throw new ContractError("@ensures can only decorate a method");
     }
-    ctx.addInitializer(function (this: This) {
-      registerPredicate(
-        metaOn(ctx.metadata),
-        "ensures",
-        ctx.name,
-        predicate as EnsuresPredicate,
-      );
-    });
+    // Write to the class's Symbol.metadata directly in the decorator body
+    // so the metadata is available statically (without instantiation).
+    registerPredicate(
+      metaOn(ctx.metadata),
+      "ensures",
+      ctx.name,
+      predicate as EnsuresPredicate,
+      metaArg,
+    );
   };
 }
 
@@ -565,10 +660,9 @@ export function rescue(
     if (ctx.kind !== "method" && ctx.kind !== "getter") {
       throw new ContractError("@rescue can only decorate a method or getter");
     }
-    ctx.addInitializer(function (this: object) {
-      const meta = metaOn(ctx.metadata);
-      meta.rescue[ctx.name] = handler as RescueHandler;
-    });
+    // Write to the class's Symbol.metadata directly in the decorator body
+    // so the metadata is available statically (without instantiation).
+    metaOn(ctx.metadata).rescue[ctx.name] = handler as RescueHandler;
   };
 }
 
@@ -683,6 +777,116 @@ function hasContracts(target: object, prop: PropertyKey): boolean {
     if ((meta.ensures[prop]?.length ?? 0) > 0) return true;
   }
   return false;
+}
+
+/* ======================================================================
+ *  Reflective metadata report
+ * ====================================================================== */
+
+/**
+ * Per-method reflective entry: the `@requires`/`@ensures` contracts (each
+ * exposing both `.predicate` and `.meta`), plus `@rule` production metadata.
+ */
+export interface MethodMetadataReport {
+  /** `@requires` contracts for this method, most-derived first. */
+  requires: RequiresContract[];
+  /** `@ensures` contracts for this method, most-derived first. */
+  ensures: EnsuresContract[];
+  /**
+   * `@rule` metadata for this production, if it is a `@rule`-decorated
+   * feature. `meta` is the object passed to `@rule(meta)`, or `undefined`
+   * for a bare `@rule`.
+   */
+  rule?: { meta?: ContractMeta };
+  /** `true` if this feature is a `@rule` production (bare or with meta). */
+  isRule: boolean;
+}
+
+/**
+ * Aggregated, read-only view of a grammar's contracts across its whole
+ * inheritance chain (most-derived first). Exposes both the executable
+ * predicates and the declarative metadata for each contract, so downstream
+ * tooling (documentation generators, test generators, verifiers) can be
+ * built on top without the library committing to any specific use case.
+ */
+export interface ContractMetadataReport {
+  /** Per-method contracts, keyed by method name. */
+  methods: Record<PropertyKey, MethodMetadataReport>;
+  /** Class invariants (most-derived first). */
+  invariants: InvariantContract[];
+}
+
+/**
+ * Build a {@link ContractMetadataReport} by walking an inheritance chain
+ * (most-derived first) and merging every class's `ContractMetadata`.
+ * `@requires`/`@ensures`/`@invariant` contract arrays are concatenated
+ * across the chain; `@rule` production metadata is surfaced per method
+ * with `isRule: true`.
+ *
+ * Both the executable `.predicate` and the declarative `.meta` are exposed
+ * on each contract. Predicates are stored unbound — when invoking a
+ * predicate from the report, pass the instance as the first (`self`)
+ * argument.
+ *
+ * Accepts either a `Grammar` **instance** (walks its prototype chain) or a
+ * `Grammar` **subclass** (walks its constructor chain, starting from the
+ * class itself — used by the static `Grammar.metadata` getter).
+ */
+export function collectMetadata(
+  instanceOrClass: object | (abstract new (...args: unknown[]) => unknown),
+): ContractMetadataReport {
+  const methods: Record<PropertyKey, MethodMetadataReport> = {};
+  const invariants: InvariantContract[] = [];
+  const chain = typeof instanceOrClass === "function"
+    ? chainMetadataOfClass(
+      instanceOrClass as abstract new (...args: unknown[]) => unknown,
+    )
+    : chainMetadata(instanceOrClass);
+  for (const meta of chain) {
+    for (const inv of meta.invariants) invariants.push(inv);
+    // `Reflect.ownKeys` includes symbol keys (which `for...in` misses), so
+    // symbol-keyed productions are surfaced in the report just like string-
+    // keyed ones. The records are plain `{}` literals (no inherited
+    // enumerable props), so own keys are exactly the registered contracts.
+    for (const key of Reflect.ownKeys(meta.requires)) {
+      const contracts = meta.requires[key as PropertyKey];
+      if (!contracts || contracts.length === 0) continue;
+      const entry = methods[key as PropertyKey] ??= {
+        requires: [],
+        ensures: [],
+        isRule: false,
+      };
+      entry.requires = [...entry.requires, ...contracts];
+    }
+    for (const key of Reflect.ownKeys(meta.ensures)) {
+      const contracts = meta.ensures[key as PropertyKey];
+      if (!contracts || contracts.length === 0) continue;
+      const entry = methods[key as PropertyKey] ??= {
+        requires: [],
+        ensures: [],
+        isRule: false,
+      };
+      entry.ensures = [...entry.ensures, ...contracts];
+    }
+    for (const key of Reflect.ownKeys(meta.ruleMeta)) {
+      const ruleMetaVal = meta.ruleMeta[key as PropertyKey];
+      const entry = methods[key as PropertyKey] ??= {
+        requires: [],
+        ensures: [],
+        isRule: false,
+      };
+      entry.isRule = true;
+      // Most-derived non-undefined @rule meta wins; a bare @rule in a
+      // subclass overrides a @rule(meta) in a base only if it explicitly
+      // passes undefined — but bare @rule leaves the base's meta intact
+      // when the subclass doesn't re-declare @rule at all. Since we walk
+      // most-derived first, only set `rule` if not already set.
+      if (entry.rule === undefined) {
+        entry.rule = { meta: ruleMetaVal };
+      }
+    }
+  }
+  return { methods, invariants };
 }
 
 /**
