@@ -33,6 +33,20 @@ suppresses duplicate completions at the same position, giving polynomial `O(n²)
 time on ambiguous grammars (the same asymptote as Earley/CYK) while full
 `parse()` still returns the complete forest.
 
+**Token-stream API**: `ZipperDriver` exposes a stepwise interface (`init` /
+`step` / `flushEof` / `forest`) — the derivative-as-continuation primitive. The
+live driver state _is_ the resumable parse: feed tokens as they arrive, pause
+when input is exhausted, resume when more arrives. `withInitialOffset` sets the
+base offset so a segment parse of a larger source reports spans in absolute
+coordinates.
+
+**Incremental memo reuse**: `stepReplay(token)` reuses the existing `Pos`
+sentinel for a token's offset if the driver visited it in a prior pass (via an
+`offsetToPos` reverse-lookup), so `Exp.m` memos hit on the unchanged region.
+`Grammar.reparseIncremental` feeds the unchanged prefix/suffix via `stepReplay`
+and the edited region via `step` (fresh `Pos`), yielding O(affected region)
+re-parsing.
+
 ### Performance
 
 Empirical scaling on the inherently-ambiguous worst case `S = S+S | 1`
@@ -62,17 +76,20 @@ deno task bench
 src/
   index.ts            — public entry point
   Grammar.ts          — OO grammar base + @rule decorator + drivers + contract Proxy
-  Parser.ts           — thin Parser<T> wrapper (fluent API)
+  Parser.ts           — thin Parser<T> wrapper (fluent API) + Checkpoint<T> type
   contracts.ts        — grammar-native contracts: assert/implies/iff + @requires/@ensures/@invariant + Proxy dispatch
+  combinators.ts      — standalone parser combinators (char, seq, or, chain, sseq, …)
+  lexemes.ts          — shared character-level lexemes (ws, ident, digits, …)
+  zipper.ts           — PwZ engine: Exp/Cxt/Mem hierarchy + ZipperDriver
   util/
     tree_key.ts       — keying for @rule argument tuples: structural for primitives/arrays/plain objects, identity-based for class instances
-  zipper/
-    zipper.ts         — PwZ engine: Exp/Cxt/Mem hierarchy + ZipperDriver
 examples/
   arith.ts           — shape-typed arithmetic + Bracha-style override
   arith-demo.ts      — runnable demo
   arith-var.ts        — arithmetic with variables; inherited attributes (read-only env)
   arith-var-demo.ts   — runnable demo
+  circular-attr-demo.ts — fixpoint composition demo (circular attribute flow)
+  incremental-demo.ts — incremental re-parsing demo
   csv.ts             — CSV parser example
   indent.ts          — significant-whitespace (indentation-sensitive) grammar; demonstrates @rule methods (parameterised productions) and Span offsets
   json.ts            — JSON parser example
@@ -89,6 +106,10 @@ test/
   grammar-composition.test.ts  — shape-typed grammars + Bracha override
   semantics.test.ts            — semantic examples (type checking, evaluation, proofs)
   contracts.test.ts            — grammar-native contracts (@requires/@ensures/@invariant, subcontracting, checked mode)
+  segment-parse.test.ts        — positional segment parsing + context checkpoints
+  segment-compose.test.ts      — S-attributed and L-attributed segment composition
+  incremental.test.ts          — token-stream API + incremental memo reuse
+  fixpoint.test.ts             — fixpoint composition for circular attribute flow
 ```
 
 ## Scripts

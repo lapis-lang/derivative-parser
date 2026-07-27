@@ -259,7 +259,7 @@ argument `v` produces a **new tree fragment** (the body with `x` bound to
 A **higher-order attribute** is a semantic action that re-enters the engine
 over a fragment of the input under a different inherited context. For
 evaluation, `app` captures the closure body's **input span** and re-parses
-that substring under the extended environment via `_forward`. This lets the
+that substring under the extended environment via `parseSegment`. This lets the
 evaluator be a single grammar class extending the abstract grammar — the
 same shape as a type checker — with no intermediate AST and no separate
 recursive function.
@@ -272,19 +272,86 @@ class STLCEval extends AbstractSTLC<{ expr: Value; atom: Value; type: Type }> {
     }
 
     // The higher-order step: app re-parses the closure body's source
-    // substring under an extended env via _forward.
+    // substring under an extended env via parseSegment.
     protected app(fn: Value, arg: Value): Value {
         if (!(fn instanceof Closure)) throw new Error('cannot apply');
         const bodyEnv = fn.env.extend(fn.param, arg);
-        return [...this._forward(this._input, fn.bodySpan, this.exprProd(bodyEnv))][0]!;
+        return [...this.parseSegment(this._input, fn.bodySpan.start, this.exprProd(bodyEnv), fn.bodySpan.end)][0]!;
     }
 }
 ```
 
-The `_forward` method spins up a fresh `ZipperDriver` over the substring; per-pass memo isolation (stale-position detection in `goDown`) makes the nested re-entry safe — the same grammar instance may be reused without leaking state.
+`parseSegment` spins up a fresh `ZipperDriver` over the substring; per-pass memo isolation (stale-position detection in `goDown`) makes the nested re-entry safe — the same grammar instance may be reused without leaking state.
 
 See [examples/stlc.ts](examples/stlc.ts) and
 [examples/lambda-eval.ts](examples/lambda-eval.ts) for the full evaluators.
+
+## Positional & compositional parsing primitives
+
+A key property of derivative parsing is that the state after consuming `k`
+tokens — the **derivative** — is self-contained: it recognises the suffix
+`[k, n)` without needing the consumed prefix `[0, k)`. This makes the engine
+well-suited for incremental, parallel, and positional parsing — the features
+that matter for IDEs, syntax highlighting, and error recovery.
+
+### Segment parsing & context checkpoints
+
+`parseSegment` parses an arbitrary segment `[startOffset, endOffset)` of the
+input under a given start parser, returning the parse forest. Spans in
+semantic actions are reported in **absolute** coordinates (relative to the
+original input), so callers need no offset compensation.
+
+A **checkpoint** captures the inherited context at a boundary as a value:
+
+```ts
+import type { Checkpoint } from '@lapis-lang/zipper-grammar';
+
+interface Checkpoint<T> {
+    readonly offset: number;      // absolute char offset where the segment begins
+    readonly start: Parser<T>;    // parser with inherited context baked in
+    readonly kind: "S" | "L";     // S-attributed (independent) or L-attributed
+}
+```
+
+Grammars with inherited context override `checkpointAt` to reconstruct the
+context at a boundary and bake it into the returned checkpoint's `start`
+parser. `parseSegmentFrom` is the convenience form taking a `Checkpoint`.
+
+### Segment composition
+
+`composeSegmentsS` composes independently-parsed S-attributed segments (no
+inherited context crosses boundaries) — the union of their forests.
+`composeSegmentsL` composes L-attributed segments by threading synthesized
+values from each segment into the next segment's checkpoint via a
+grammar-supplied `nextCheckpoint` callback:
+
+```ts
+const composed = g.composeSegmentsL(input, initialCheckpoint, [boundary1, boundary2],
+    (prevResults, prevEnd, i) => g.checkpointAt(prevEnd, recoverCtx(prevResults, i)));
+```
+
+The composed result equals what a one-shot parse of the whole input would
+produce.
+
+### Incremental re-parsing
+
+After a small edit, `reparseIncremental` re-parses only the affected region,
+reusing memoised derivations for the unchanged prefix and suffix. See
+[examples/incremental-demo.ts](examples/incremental-demo.ts) for a working
+demonstration.
+
+For non-blocking or streaming use, `ZipperDriver` can be driven token-by-token
+via `init` / `step` / `flushEof` / `forest` — see the API table below.
+
+### Fixpoint composition (circular attribute flow)
+
+`parseToFixpoint` iterates a fixpoint over handler body types for circular
+attribute flow: it repeatedly parses handler bodies under a context σ, joins
+the results, and re-parses until σₙ₊₁ = σₙ (convergence). An optional
+`maxIterations` cap is available as a safety net.
+
+See [examples/circular-attr-demo.ts](examples/circular-attr-demo.ts) for a
+demonstration.
 
 ## Tree-consuming grammars
 
@@ -605,13 +672,14 @@ ignored.
 
 ```ts
 import {
-    Grammar, Parser,
+    Grammar, Parser, ZipperDriver,
     assert, implies, iff,
     requires, ensures, invariant,
     setCheckedMode, getCheckedMode,
     ContractError, AssertionError,
+    MonotonicityViolationError, FixpointDivergenceError,
 } from '@lapis-lang/zipper-grammar';
-import type { Span } from '@lapis-lang/zipper-grammar';
+import type { Span, Checkpoint, AttributionKind, Pos, Tok } from '@lapis-lang/zipper-grammar';
 ```
 
 ### Combinators — standalone functions
@@ -650,7 +718,13 @@ Subclass and define productions as `@rule` getters (or methods) returning
 | `sseq(...parsers)`                  | Sigspace sequence — like `seq` but auto-inserts `this.ws` between terms. |
 | `parse(input)` / `recognize(input)` | Drivers — full forest / boolean.           |
 | `parseTree(treeTokens)`             | Parse a flattened tree-token stream (tree-consuming grammar). |
-| `_forward(input, span, start)`       | Re-parse a substring under `start` — higher-order attribute combinator (protected). |
+| `parseSegment(input, startOffset, start, endOffset?)` | Parse a segment under `start`; spans are absolute. |
+| `parseSegmentFrom(input, checkpoint, endOffset?)` | Parse a segment from a `Checkpoint` (context baked in). |
+| `checkpointAt(input, offset)`        | Build a `Checkpoint` at a boundary (override in grammars with inherited context). |
+| `composeSegmentsS(forests)`          | Compose S-attributed segments (union of independent forests). |
+| `composeSegmentsL(input, cp, ends, nextCp)` | Compose L-attributed segments, threading context across boundaries. |
+| `reparseIncremental(input, start, editStart, editEnd, priorDriver)` | Re-parse after an edit, reusing memos for the unchanged region. |
+| `parseToFixpoint(sigma, parseBodies, join, eq?, maxIterations?)` | Iterate a fixpoint for circular attribute flow. |
 
 The `@rule` decorator can wrap either a **getter** or a **method**:
 - `@rule get foo()` — memoised per instance; the canonical form for

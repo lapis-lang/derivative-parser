@@ -105,3 +105,43 @@ export function parserOf<T>(exp: Exp): Parser<T> {
 export function emptyParser<T = never>(): Parser<T> {
   return new Parser<T>(new EmptyExp());
 }
+
+/* ─── Positional / compositional parsing primitives ─────────────────── */
+
+/**
+ * Attribution kind of a segment boundary.
+ *
+ * - `"S"` — S-attributed: the segment depends on no inherited context, so it
+ *   can be parsed independently of any prefix. Composition is trivial
+ *   (concatenate forests).
+ * - `"L"` — L-attributed: the segment depends on inherited context derived
+ *   from the prefix. Composition requires the prefix's synthesized values to
+ *   build the checkpoint for the next segment.
+ */
+export type AttributionKind = "S" | "L";
+
+/**
+ * A context checkpoint: a resumable parse position together with the start
+ * parser that has the inherited context baked in.
+ *
+ * The derivative parser's self-containment property means the state after
+ * consuming `k` tokens recognises the suffix `[k, n)` without needing the
+ * consumed prefix `[0, k)`. A `Checkpoint` makes that resumption point a
+ * value: `offset` is the absolute character position in the source, and
+ * `start` is the parser to drive over the suffix (built by the grammar with
+ * the inherited context at `offset` already captured in its closures).
+ *
+ * Build checkpoints via {@link Grammar.checkpointAt}; parse segments via
+ * {@link Grammar.parseSegment}.
+ */
+export interface Checkpoint<T> {
+  /** Absolute character offset in the source string where the segment begins. */
+  readonly offset: number;
+  /**
+   * The parser to drive over the suffix `[offset, end)`. For an L-attributed
+   * segment this parser has the inherited context at `offset` baked in.
+   */
+  readonly start: Parser<T>;
+  /** Attribution kind of the boundary, for composition safety checks. */
+  readonly kind: AttributionKind;
+}

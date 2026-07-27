@@ -1,4 +1,4 @@
-import { Parser } from "./Parser.ts";
+import { type Checkpoint, Parser } from "./Parser.ts";
 import {
   DelayedExp,
   type Span,
@@ -152,6 +152,23 @@ export abstract class Grammar<S extends GrammarShape = GrammarShape> {
     return tokens;
   }
 
+  /**
+   * Tokenize the substring `input.slice(start, end)` into one `Tok` per
+   * character, with `offset` set to the **absolute** position in `input`
+   * (i.e. `start + i`), so a fresh driver's `posToOffset` maps directly to
+   * absolute source offsets. This is the positional primitive that lets
+   * {@link parseSegment} return spans already in absolute coordinates,
+   * without callers compensating with an input-offset base.
+   */
+  private _toTokensAbsolute(input: string, start: number, end: number): Tok[] {
+    const tokens: Tok[] = [];
+    let offset = start;
+    for (const c of input.slice(start, end)) {
+      tokens.push({ tag: c, sym: c, offset: offset++ });
+    }
+    return tokens;
+  }
+
   /** Parse the input and return the parse forest. Empty set ⇒ rejection. */
   parse(input: string): Set<S[keyof S]> {
     assertInvariants(this);
@@ -233,6 +250,372 @@ export abstract class Grammar<S extends GrammarShape = GrammarShape> {
     assertInvariants(this);
     const substring = input.slice(span.start, span.end);
     return new ZipperDriver().parse<T>(start._exp, this._toTokens(substring));
+  }
+
+  /* ── Positional / compositional parsing primitives ────────────────── */
+  //
+  // These leverage the derivative parser's self-containment: the state after
+  // consuming `k` tokens recognises the suffix `[k, n)` without the prefix
+  // `[0, k)`. `parseSegment` exposes that as a public primitive; `checkpointAt`
+  // lets a grammar capture the inherited context at a boundary as a value.
+  // See the README for the full motivation.
+
+  /**
+   * Parse the segment `input.slice(startOffset, endOffset)` under `start`,
+   * returning the parse forest. Spans in semantic actions are reported in
+   * **absolute** coordinates (relative to `input`), so callers need no
+   * offset compensation.
+   *
+   * This generalises {@link _forward}: instead of re-tokenising a substring
+   * from offset 0 (forcing callers to track an input-offset base), it
+   * tokenises the segment with absolute offsets, so a fresh
+   * {@link ZipperDriver}'s position map points straight into the original
+   * source. Per-pass memo isolation keeps the nested driver independent of
+   * any outer parse.
+   *
+   * @param input   The full source string.
+   * @param startOffset  Absolute char offset where the segment begins.
+   * @param start   The parser to drive over the segment (for an L-attributed
+   *                segment, build this with the inherited context at
+   *                `startOffset` baked in — e.g. via {@link checkpointAt}).
+   * @param endOffset  Absolute char offset where the segment ends. Defaults
+   *                   to `input.length`.
+   */
+  parseSegment<T>(
+    input: string,
+    startOffset: number,
+    start: Parser<T>,
+    endOffset: number = input.length,
+  ): Set<T> {
+    assertInvariants(this);
+    if (
+      startOffset < 0 || endOffset < startOffset || endOffset > input.length
+    ) {
+      throw new RangeError(
+        `parseSegment: invalid segment [${startOffset}, ${endOffset}) for input of length ${input.length}`,
+      );
+    }
+    const tokens = this._toTokensAbsolute(input, startOffset, endOffset);
+    return new ZipperDriver().withInitialOffset(startOffset)
+      .parse<T>(start._exp, tokens);
+  }
+
+  /**
+   * Parse the segment `[checkpoint.offset, endOffset)` under the checkpoint's
+   * start parser. Convenience form of {@link parseSegment} taking a
+   * {@link Checkpoint} (whose `start` has the inherited context baked in).
+   *
+   * @param input      The full source string.
+   * @param checkpoint  The checkpoint defining the segment's start position
+   *                    and context-baked start parser.
+   * @param endOffset  Absolute char offset where the segment ends. Defaults
+   *                   to `input.length`.
+   */
+  parseSegmentFrom<T>(
+    input: string,
+    checkpoint: Checkpoint<T>,
+    endOffset: number = input.length,
+  ): Set<T> {
+    return this.parseSegment(
+      input,
+      checkpoint.offset,
+      checkpoint.start,
+      endOffset,
+    );
+  }
+
+  /**
+   * Build a {@link Checkpoint} at `offset` — capture the inherited context at
+   * a boundary as a value, so a segment starting there can be parsed
+   * independently (and later composed).
+   *
+   * The default implementation throws: a grammar with no inherited context
+   * has no meaningful checkpoint (its `start` parser is already
+   * context-free). Grammars with inherited context (e.g. threading a
+   * `TypeEnv` or `ValEnv`) override this to reconstruct the context at
+   * `offset` and bake it into the returned checkpoint's `start` parser.
+   *
+   * A typical override runs a lightweight recognition pass over the prefix
+   * `[0, offset)` to recover the context at the boundary, then returns
+   * `{ offset, start: this.<prod>(recoveredCtx), kind: "L" }`. For
+   * S-attributed sub-grammars (no inherited context), return
+   * `kind: "S"` with the context-free start parser.
+   *
+   * @param input   The full source string.
+   * @param offset  Absolute char offset of the boundary.
+   */
+  checkpointAt(_input: string, _offset: number): Checkpoint<unknown> {
+    throw new Error(
+      `${this.constructor.name}.checkpointAt: not supported — override in a grammar with inherited context to enable segment parsing.`,
+    );
+  }
+
+  /* ── Segment composition ──────────────────────────────────────────── */
+  //
+  // Composition combines the results of adjacent segment parses across
+  // boundaries. For S-attributed sub-grammars (no inherited context) segments
+  // are independent and composition is trivial. For L-attributed segments
+  // the prefix's synthesized values must be threaded into the next segment's
+  // checkpoint — `composeSegmentsL` does this iteratively via a
+  // grammar-supplied `nextCheckpoint` callback.
+
+  /**
+   * Compose the results of independently-parsed S-attributed segments.
+   *
+   * Each segment's parse forest is independent (no inherited context crosses
+   * a boundary), so composition is the union of all segment forests. The
+   * composed result equals what a one-shot parse of the whole input would
+   * produce when the grammar is S-attributed over the split points.
+   *
+   * @param segmentForests  The parse forests returned by {@link parseSegment}
+   *                        for each segment, in source order.
+   * @returns The union of all segment forests.
+   */
+  composeSegmentsS<T>(segmentForests: readonly Set<T>[]): Set<T> {
+    assertInvariants(this);
+    const out = new Set<T>();
+    for (const forest of segmentForests) for (const v of forest) out.add(v);
+    return out;
+  }
+
+  /**
+   * Compose adjacent L-attributed segments by threading synthesized values
+   * from each segment into the next segment's checkpoint.
+   *
+   * Starting from `initialCheckpoint`, this parses segment 0
+   * (`[initialCheckpoint.offset, ends[0])`), calls `nextCheckpoint` with
+   * segment 0's results to build the checkpoint for segment 1, parses
+   * segment 1 (`[cp₁.offset, ends[1])`), and so on. The final segment's
+   * parse forest is the composed result — it carries the full result because
+   * L-attributed context threads through every boundary.
+   *
+   * The `initialCheckpoint` must have `kind: "L"`; each checkpoint returned
+   * by `nextCheckpoint` must also have `kind: "L"` and its `offset` must
+   * equal `prevEnd` (where the previous segment ended).
+   *
+   * The `ends` array has one fewer element than the number of segments: the
+   * last segment runs to `input.length`. Concretely, with `ends.length === k`
+   * there are `k + 1` segments and `k + 1` checkpoints (the initial plus one
+   * built per boundary).
+   *
+   * @param input             The full source string.
+   * @param initialCheckpoint  Checkpoint for segment 0 (context baked in).
+   * @param ends              End offsets of segments 0..k-1 (the last segment
+   *                          runs to `input.length`).
+   * @param nextCheckpoint    Called after each segment to build the next
+   *                          checkpoint. Receives `(prevResults, prevEnd,
+   *                          segmentIndex)`. `prevResults` is the just-parsed
+   *                          segment's forest; `prevEnd` is where it ended;
+   *                          `segmentIndex` is the 0-based index of the
+   *                          segment just parsed. Must return a
+   *                          {@link Checkpoint} whose `offset` is `prevEnd`.
+   * @returns The final segment's parse forest.
+   */
+  composeSegmentsL<T>(
+    input: string,
+    initialCheckpoint: Checkpoint<T>,
+    ends: readonly number[],
+    nextCheckpoint: (
+      prevResults: Set<T>,
+      prevEnd: number,
+      segmentIndex: number,
+    ) => Checkpoint<T>,
+  ): Set<T> {
+    assertInvariants(this);
+    if (initialCheckpoint.kind !== "L") {
+      throw new TypeError(
+        `composeSegmentsL: initialCheckpoint must be L-attributed (kind: "L"), got kind: "${initialCheckpoint.kind}"`,
+      );
+    }
+    if (ends.length === 0) {
+      // Single segment: parse [initialCheckpoint.offset, input.length).
+      return this.parseSegmentFrom(input, initialCheckpoint);
+    }
+    let checkpoint = initialCheckpoint;
+    let results: Set<T> = new Set<T>();
+    for (let i = 0; i < ends.length; i++) {
+      const end = ends[i]!;
+      results = this.parseSegmentFrom(input, checkpoint, end);
+      checkpoint = nextCheckpoint(results, end, i);
+      // The next checkpoint must be L-attributed and start where this segment ended.
+      if (checkpoint.kind !== "L") {
+        throw new TypeError(
+          `composeSegmentsL: nextCheckpoint for segment ${i} returned kind: "${checkpoint.kind}", expected "L"`,
+        );
+      }
+      if (checkpoint.offset !== end) {
+        throw new RangeError(
+          `composeSegmentsL: nextCheckpoint for segment ${i} returned offset ${checkpoint.offset}, expected ${end}`,
+        );
+      }
+    }
+    // Final segment: parse [checkpoint.offset, input.length).
+    results = this.parseSegmentFrom(input, checkpoint);
+    return results;
+  }
+
+  /* ── Incremental memo reuse ────────────────────────────────────────── */
+  //
+  // After a small edit, re-parsing the whole input is wasteful when most of
+  // the derivation is unchanged. The derivative's self-containment means
+  // `Exp.m` memos from the prior pass are still valid for unchanged regions
+  // — if the driver reuses the same `Pos` sentinels. `reparseIncremental`
+  // feeds the unchanged prefix via `stepReplay` (memo hits), the edited
+  // region via `step` (fresh `Pos`, re-derive), and the unchanged suffix via
+  // `stepReplay` again — yielding O(affected region) re-parsing.
+
+  /**
+   * Re-parse `input` after an edit in the region `[editStart, editEnd)`,
+   * reusing memoised derivations from `priorDriver` for the unchanged
+   * prefix `[0, editStart)` and suffix `[editEnd, input.length)`.
+   *
+   * The `priorDriver` must be the live `ZipperDriver` from the prior parse
+   * (its `posToOffset` map holds the `Pos` sentinels that `Exp.m` memos
+   * reference). This method re-feeds the unchanged tokens via `stepReplay`
+   * (reusing those `Pos` objects so memos hit), and the edited tokens via
+   * `step` (fresh `Pos`, re-derive). The result equals a full re-parse but
+   * re-derives only the affected region.
+   *
+   * @param input        The edited source string.
+   * @param start        The grammar's root parser.
+   * @param editStart    Absolute offset where the edit begins.
+   * @param editEnd      Absolute offset where the edit ends.
+   * @param priorDriver The live driver from the prior parse (its `posToOffset`
+   *                     provides the `Pos` sentinels for memo reuse).
+   * @returns The parse forest for the edited input.
+   */
+  reparseIncremental<T>(
+    input: string,
+    start: Parser<T>,
+    editStart: number,
+    editEnd: number,
+    priorDriver: ZipperDriver,
+  ): Set<T> {
+    assertInvariants(this);
+    if (editStart < 0 || editEnd < editStart || editEnd > input.length) {
+      throw new RangeError(
+        `reparseIncremental: invalid edit [${editStart}, ${editEnd}) for input of length ${input.length}`,
+      );
+    }
+    const driver = priorDriver; // reuse the same driver so Pos sentinels match
+    driver.init(start._exp, { keepMemoMap: true });
+    const tokens = this._toTokens(input);
+    for (const tok of tokens) {
+      if (tok.offset < editStart || tok.offset >= editEnd) {
+        driver.stepReplay(tok); // unchanged region — reuse Pos, memo hits
+      } else {
+        driver.step(tok); // edited region — fresh Pos, re-derive
+      }
+    }
+    driver.flushEof();
+    return driver.forest<T>();
+  }
+
+  /* ── Fixpoint composition (circular attribute flow, Approach D) ────── */
+  //
+  // Once segment parsing and composition exist, circular attribute flow
+  // can be solved by iterative fixpoint composition: parse all
+  // handler bodies under a placeholder σ₀, compute σ₁ = join of their
+  // results, re-parse under σ₁, repeat until σₙ₊₁ = σₙ. This needs no
+  // engine rework — only the segment primitives above — and is uniquely
+  // parallelizable (segments are independent given contexts).
+
+  /**
+   * Iterate a fixpoint over circular attribute flow until convergence.
+   *
+   * Given an initial placeholder `sigma` (σ₀), repeatedly calls `parseBodies`
+   * to parse all handler bodies under the current σ, then computes
+   * `sigma' = join(sigma, joinAll(bodyResults))`. If `sigma' === sigma`
+   * (via `eq`, default `Object.is`), the fixpoint is reached and `sigma'`
+   * is returned. Otherwise, asserts monotonicity (`sigma ⊑ sigma'`, i.e.
+   * `join(sigma, sigma') === sigma'`) and continues.
+   *
+   * Convergence is guaranteed for monotone `join` over a finite-height
+   * domain (the lattice axiom). On a monotonicity violation — a malformed
+   * grammar with a non-monotone `join`, or an infinite-height domain —
+   * throws {@link MonotonicityViolationError}.
+   *
+   * @param sigma        The initial placeholder σ₀.
+   * @param parseBodies  Called each iteration with the current σ; returns an
+   *                     array of parse results (one per handler body). Each
+   *                     result is fed to `join`.
+   * @param join         The lattice join: `join(a, b)` must be idempotent,
+   *                     commutative, associative, and monotone. Used both to
+   *                     fold the body results and to check `sigma ⊑ sigma'`.
+   * @param eq           Equality test for fixpoint detection. Defaults to
+   *                     `Object.is`. Override for value-structured σ.
+   * @param maxIterations  Optional cap on iterations (default: unlimited).
+   *                     When set and exceeded, throws
+   *                     {@link FixpointDivergenceError} — a safety net for
+   *                     monotone-but-infinite-height domains (e.g.
+   *                     Agda-style universe towers). Default off so it never
+   *                     interferes with a correct slow-converging grammar.
+   * @returns The converged σ.
+   */
+  parseToFixpoint<S>(
+    sigma: S,
+    parseBodies: (sigma: S) => readonly S[],
+    join: (a: S, b: S) => S,
+    eq: (a: S, b: S) => boolean = Object.is as (a: S, b: S) => boolean,
+    maxIterations?: number,
+  ): S {
+    assertInvariants(this);
+    let iteration = 0;
+    while (true) {
+      if (maxIterations !== undefined && iteration >= maxIterations) {
+        throw new FixpointDivergenceError(
+          `parseToFixpoint: exceeded maxIterations (${maxIterations}) without convergence — ` +
+            `the domain may have infinite height (e.g. a universe tower).`,
+        );
+      }
+      const bodyResults = parseBodies(sigma);
+      // Fold-join all body results into a single σ_body.
+      // The fold starts from σ so that σ_body = join(σ, r₁, r₂, …) — the
+      // body results accumulated on top of the current context.
+      let sigmaBody = sigma;
+      for (const r of bodyResults) sigmaBody = join(sigmaBody, r);
+      // σ_next = σ_body (already includes σ via the fold seed).
+      const sigmaNext = sigmaBody;
+      if (eq(sigmaNext, sigma)) return sigmaNext; // fixpoint reached
+      // Monotonicity check: sigma ⊑ sigmaNext iff join(sigma, sigmaNext) === sigmaNext.
+      if (!eq(join(sigma, sigmaNext), sigmaNext)) {
+        throw new MonotonicityViolationError(
+          `parseToFixpoint: monotonicity violated at iteration ${iteration} — ` +
+            `join(σₙ, σₙ₊₁) ≠ σₙ₊₁. The grammar's join is non-monotone or the ` +
+            `domain is misbehaving.`,
+        );
+      }
+      sigma = sigmaNext;
+      iteration++;
+    }
+  }
+}
+
+/**
+ * Thrown by {@link Grammar.parseToFixpoint} when the monotonicity invariant
+ * `σₙ ⊑ σₙ₊₁` is violated — i.e. `join(σₙ, σₙ₊₁) ≠ σₙ₊₁`. This indicates a
+ * malformed grammar (non-monotone `join`) or a misbehaving domain, not a
+ * correct slow-converging grammar.
+ */
+export class MonotonicityViolationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "MonotonicityViolationError";
+  }
+}
+
+/**
+ * Thrown by {@link Grammar.parseToFixpoint} when `maxIterations` is set and
+ * exceeded without convergence. A safety net for monotone-but-infinite-height
+ * domains (e.g. Agda-style universe towers `Type₀ : Type₁ : Type₂ : …`),
+ * where a monotone chain ascends forever without violating the
+ * monotonicity check. Default `maxIterations` is off so this never fires on
+ * a correct grammar.
+ */
+export class FixpointDivergenceError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "FixpointDivergenceError";
   }
 }
 
