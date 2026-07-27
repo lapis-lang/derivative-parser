@@ -630,18 +630,12 @@ export class STLCTypeCheck
   }
   /**
    * Application typing rule (App).  `@requires` enforces domain match;
-   * on failure returns `undefined` (graceful).
+   * on failure returns `undefined` (graceful). `args`/`result` types are
+   * inferred from the method signature — no manual annotation needed.
    */
-  @requires((_self: STLCTypeCheck, fn: Type, arg: Type) =>
-    fn instanceof TFun && typeEq(fn.dom, arg)
-  )
-  @ensures(
-    (
-      _self: STLCTypeCheck,
-      _args: [Type, Type],
-      _old: STLCTypeCheck,
-      result: Type,
-    ) => result instanceof TVar || result instanceof TFun,
+  @requires((_self, fn, arg) => fn instanceof TFun && typeEq(fn.dom, arg))
+  @ensures((_self, _args, _old, result) =>
+    result instanceof TVar || result instanceof TFun
   )
   protected app(fn: Type, _arg: Type): Type {
     // The premise is enforced by @requires; the body is the rule's conclusion.
@@ -651,7 +645,7 @@ export class STLCTypeCheck
     return body;
   }
   /** Variable typing rule (Var).  `@requires` checks binding in ctx. */
-  @requires((_self: STLCTypeCheck, name: string, ctx: unknown) =>
+  @requires((_self, name, ctx) =>
     ctx instanceof TypeEnv && ctx.lookup(name) !== undefined
   )
   protected varRef(name: string, ctx: unknown): Type {

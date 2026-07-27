@@ -349,10 +349,12 @@ throwing, because a failed premise means the inference rule doesn't apply —
 the term is ill-typed, not a crashed program.
 
 ```ts
-// With contracts: the rule is declared, not buried
-@requires((_self, fn: Type, arg: Type) =>
+// With contracts: the rule is declared, not buried.
+// `args`/`result` types are inferred from the method signature — no
+// manual annotation needed inside the predicates.
+@requires((_self, fn, arg) =>
     fn instanceof TFun && typeEq(fn.dom, arg))   // premises
-@ensures((_self, _args, _old, result: Type) =>
+@ensures((_self, _args, _old, result) =>
     result instanceof TVar || result instanceof TFun)  // conclusion
 protected app(fn: Type, _arg: Type): Type {
     return (fn as TFun).cod;                     // the rule's body
@@ -395,8 +397,8 @@ manual `if`-guard-and-return-sentinel pattern with a declarative premise:
 ```ts
 import { requires } from '@lapis-lang/zipper-grammar';
 
-// The Var rule's premise: x must be bound in Γ
-@requires((_self, name: string, ctx: unknown) =>
+// The Var rule's premise: x must be bound in Γ.
+@requires((_self, name, ctx) =>
     ctx instanceof TypeEnv && ctx.lookup(name) !== undefined)
 protected varRef(name: string, ctx: unknown): Type {
     return (ctx as TypeEnv).lookup(name) as Type;
@@ -406,15 +408,20 @@ protected varRef(name: string, ctx: unknown): Type {
 ### `@ensures` — inference-rule conclusions
 
 Declares the conclusion below the line — a postcondition on the method's
-result. The predicate receives `(self, args, old, result)` where `old` is
-a snapshot of `self` taken before the body ran. A violated postcondition
+result. The predicate receives `(self, args, old, result)` where `args` is
+the whole `Parameters` tuple of the method, `result` is its `ReturnType`,
+and `old` is an `OldSnapshot` of `self` (its own enumerable string-keyed
+*data* properties as they were before the body ran — getters and methods
+are absent). All three are **inferred from the method signature**, so no
+manual annotation is needed inside the predicate. A violated postcondition
 is a *bug* (e.g. a missing `return`), so it throws `ContractError`:
 
 ```ts
 import { ensures } from '@lapis-lang/zipper-grammar';
 
-// The App rule's conclusion: the result is a valid Type
-@ensures((_self, _args, _old, result: Type) =>
+// The App rule's conclusion: the result is a valid Type.
+// `result: Type` is inferred from `app(...): Type`.
+@ensures((_self, _args, _old, result) =>
     result instanceof TVar || result instanceof TFun)
 protected app(fn: Type, arg: Type): Type {
     return (fn as TFun).cod;
@@ -439,12 +446,15 @@ abstract class AbstractSTLC<S extends STLCShape> extends Grammar<S> { /* ... */ 
 Declares a handler invoked when a production's parse yields an empty forest.
 The handler receives a `ParseFailure` (with `reason`, `message`, `position`,
 `production`) and may report a diagnostic, return an alternative parser, or
-call `retry` to re-run the production once. Inherited unless overridden
+call `retry` to re-run the production once. The `args` parameter is typed as
+`Parameters` of the decorated production — inferred, no manual annotation
+needed (for getter productions `args` is `[]`). Inherited unless overridden
 (most-derived wins):
 
 ```ts
 import { rescue } from '@lapis-lang/zipper-grammar';
 
+// `args` is inferred as `[unknown]` from `appProd(ctx: unknown)`.
 @rescue((self, failure, _args, retry) => {
     self.diagnostic(`type error: ${failure.message}`, failure.reason);
     return self.empty();
@@ -603,10 +613,10 @@ The `@rule` decorator can wrap either a **getter** or a **method**:
 | `assert(c, m?)` | function  | Inline assertion; throws `AssertionError` on failure; narrows `c`'s type. |
 | `implies(p, q)` | function  | Material implication `!p \|\| q`.                              |
 | `iff(p, q)`     | function  | Biconditional `(p && q) \|\| (!p && !q)`.                       |
-| `@requires`     | decorator | Precondition; on failure returns `undefined` (graceful → `empty()`). OR-ed across inheritance. |
-| `@ensures`      | decorator | Postcondition `(self, args, old, result) => boolean`; throws `ContractError` on failure. AND-ed across inheritance. |
+| `@requires`     | decorator | Precondition `(self, ...args) => boolean`; on failure returns `undefined` (graceful → `empty()`). `args` types are inferred from the decorated method. OR-ed across inheritance. |
+| `@ensures`      | decorator | Postcondition `(self, args, old, result) => boolean`; throws `ContractError` on failure. `args`/`result` inferred from the method; `old` is an `OldSnapshot<This>` (data-only). AND-ed across inheritance. |
 | `@invariant`    | decorator | Class invariant; checked after construction and after each contracted call. AND-ed across inheritance. |
-| `@rescue`       | decorator | Parse-failure recovery; handler `(self, failure, args, retry?) => unknown` invoked when a production yields an empty forest. Inherited (most-derived wins). |
+| `@rescue`       | decorator | Parse-failure recovery; handler `(self, failure, args, retry?) => unknown` invoked when a production yields an empty forest. `args` inferred from the decorated production (`Parameters`; `[]` for getters). Inherited (most-derived wins). |
 | `setCheckedMode(b)` / `getCheckedMode()` | function | Toggle the global default for contract enforcement. Applies live to all instances (existing and new). When off, no Proxy is created for new instances and existing Proxies skip checks (zero overhead). |
 | `ContractError` / `AssertionError` | class | Error types thrown by `@ensures`/`@invariant` and `assert` respectively. |
 | `ParseFailure` / `Diagnostic` | type | `{ reason, message?, ... }` — failure description passed to `@rescue` / carried by `diagnostic()`. |

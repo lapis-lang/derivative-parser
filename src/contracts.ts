@@ -201,23 +201,90 @@ function* chainMetadata(instance: object): Generator<ContractMetadata> {
 /** A class invariant predicate: `(self) => boolean`. */
 export type InvariantPredicate<This = unknown> = (self: This) => boolean;
 
-/** A precondition predicate: `(self, ...args) => boolean`. */
-export type RequiresPredicate<This = unknown, A extends unknown[] = unknown[]> =
-  (
-    self: This,
-    ...args: A
-  ) => boolean;
+/**
+ * Generic function bound used as the default `F` for predicate generics.
+ * Keeps unannotated predicates compiling while letting an explicit method
+ * type drive `Parameters<F>` / `ReturnType<F>` inference.
+ */
+// deno-lint-ignore no-explicit-any
+type AnyFn = (...args: any[]) => unknown;
 
-/** A postcondition predicate: `(self, args, old, result) => boolean`. */
-export type EnsuresPredicate<
+/**
+ * The keys of `This` whose values are *not* functions — i.e. the data
+ * fields that {@link snapshotOld} copies as own enumerable string-keyed
+ * properties. Prototype methods and getters are not own properties, so
+ * `Object.keys` never returns them; arrow-function fields *are* own data
+ * properties and are copied, but they are function-valued so they appear
+ * in {@link FnKeys} instead (see {@link OldSnapshot}).
+ */
+type DataKeys<This> =
+  & {
+    [K in keyof This]-?: This[K] extends (...a: never[]) => unknown ? never : K;
+  }[keyof This]
+  & (string | symbol);
+
+/**
+ * The keys of `This` whose values *are* functions. These cover both
+ * prototype methods (absent from the runtime snapshot — not own props) and
+ * arrow-function fields (present in the runtime snapshot — own enumerable
+ * data props). TypeScript cannot distinguish the two at the type level, so
+ * {@link OldSnapshot} marks them *optional* to stay honest.
+ */
+type FnKeys<This> =
+  & {
+    [K in keyof This]-?: This[K] extends (...a: never[]) => unknown ? K : never;
+  }[keyof This]
+  & (string | symbol);
+
+/**
+ * Honest shape of the `old` value passed to `@ensures` predicates: a plain
+ * object holding the own enumerable string-keyed properties of `This` as
+ * they were before the method body ran.
+ *
+ * - **Data fields** (non-function-valued own props) are *required* — they
+ *   are always copied by {@link snapshotOld}.
+ * - **Function-valued keys** (methods, getters, arrow-function fields) are
+ *   *optional* — TypeScript cannot distinguish own arrow-function fields
+ *   (present at runtime) from prototype methods/getters (absent at
+ *   runtime), so the type is honest about the uncertainty. Accessing such
+ *   a key yields `T | undefined`; narrow with `instanceof` or a truthiness
+ *   check if you need to call it.
+ */
+export type OldSnapshot<This> =
+  & { [K in DataKeys<This>]: This[K] }
+  & { [K in FnKeys<This>]?: This[K] };
+
+/**
+ * A precondition predicate: `(self, ...args) => boolean`.
+ *
+ * `F` is the decorated method's type; `...args` is spread as
+ * `Parameters<F>` so the predicate reads positionally. Defaults to a fully
+ * generic function so unannotated use still compiles (args `unknown[]`).
+ */
+export type RequiresPredicate<
   This = unknown,
-  A extends unknown[] = unknown[],
-  R = unknown,
+  F extends AnyFn = (...args: unknown[]) => unknown,
 > = (
   self: This,
-  args: A,
-  old: This,
-  result: R,
+  ...args: Parameters<F>
+) => boolean;
+
+/**
+ * A postcondition predicate: `(self, args, old, result) => boolean`.
+ *
+ * `F` is the decorated method's type; `args` is the whole `Parameters<F>`
+ * tuple, `old` is an {@link OldSnapshot} of `This`, and `result` is
+ * `ReturnType<F>`. Defaults to a fully generic function so unannotated use
+ * still compiles (args `unknown[]`, result `unknown`).
+ */
+export type EnsuresPredicate<
+  This = unknown,
+  F extends AnyFn = (...args: unknown[]) => unknown,
+> = (
+  self: This,
+  args: Parameters<F>,
+  old: OldSnapshot<This>,
+  result: ReturnType<F>,
 ) => boolean;
 
 /* ======================================================================
@@ -334,13 +401,17 @@ function tryInvariants(instance: object): ContractError | null {
 
 /**
  * Precondition; on failure returns `undefined` (graceful → empty forest).
- * OR-ed across inheritance.
+ * OR-ed across inheritance. The predicate's `...args` are typed as
+ * `Parameters` of the decorated method — inferred, no manual annotation.
  */
-export function requires<This extends object, A extends unknown[], R>(
-  predicate: RequiresPredicate<This, A>,
-): <F extends (this: This, ...args: A) => R>(
-  target: F,
-  ctx: ClassMethodDecoratorContext<This, F>,
+export function requires<
+  This extends object,
+  M extends AnyFn = AnyFn,
+>(
+  predicate: RequiresPredicate<This, M>,
+): (
+  target: M,
+  ctx: ClassMethodDecoratorContext<This, M>,
 ) => void {
   return (_target, ctx) => {
     if (ctx.kind !== "method") {
@@ -362,14 +433,19 @@ export function requires<This extends object, A extends unknown[], R>(
  * ====================================================================== */
 
 /**
- * Postcondition `(self, args, old, result) => boolean`; throws `ContractError` on failure.
- * AND-ed across inheritance.
+ * Postcondition `(self, args, old, result) => boolean`; throws `ContractError`
+ * on failure. AND-ed across inheritance. The predicate's `args`/`result` are
+ * typed as `Parameters`/`ReturnType` of the decorated method — inferred, no
+ * manual annotation needed.
  */
-export function ensures<This extends object, A extends unknown[], R>(
-  predicate: EnsuresPredicate<This, A, R>,
-): <F extends (this: This, ...args: A) => R>(
-  target: F,
-  ctx: ClassMethodDecoratorContext<This, F>,
+export function ensures<
+  This extends object,
+  M extends AnyFn = AnyFn,
+>(
+  predicate: EnsuresPredicate<This, M>,
+): (
+  target: M,
+  ctx: ClassMethodDecoratorContext<This, M>,
 ) => void {
   return (_target, ctx) => {
     if (ctx.kind !== "method") {
@@ -392,12 +468,12 @@ export function ensures<This extends object, A extends unknown[], R>(
  * the same own enumerable string-keyed properties. Symbol-keyed properties
  * are not included (they are skipped by `Object.keys`).
  */
-function snapshotOld<T>(self: T): T {
+function snapshotOld<T>(self: T): OldSnapshot<T> {
   const old: Record<PropertyKey, unknown> = {};
   for (const key of Object.keys(self as unknown as object)) {
     old[key] = (self as unknown as Record<PropertyKey, unknown>)[key];
   }
-  return old as unknown as T;
+  return old as unknown as OldSnapshot<T>;
 }
 
 /* ======================================================================
@@ -425,29 +501,60 @@ export interface ParseFailure {
 }
 
 /**
- * Parse-failure recovery handler. Invoked when a production yields an empty forest.
+ * Parse-failure recovery handler. Invoked when a production yields an empty
+ * forest.
+ *
+ * `M` is the decorated production's type; `args` is `Parameters<M>` —
+ * inferred from the method, so no manual annotation is needed. For getter
+ * productions `M` is `() => unknown` and `args` is `[]`. Defaults to a fully
+ * generic function so unannotated use still compiles (args `unknown[]`).
  */
-export type RescueHandler = (
-  self: object,
+export type RescueHandler<
+  This = object,
+  M extends AnyFn = (...args: unknown[]) => unknown,
+> = (
+  self: This,
   failure: ParseFailure,
-  args: unknown[],
+  args: Parameters<M>,
   retry?: () => unknown,
 ) => unknown;
 
 /**
  * Parse-failure recovery; most-derived handler wins.
  * Decorator factory for `@rescue` — accepts both getter and method productions.
+ * The handler's `args` are typed as `Parameters` of the decorated production —
+ * inferred, no manual annotation needed.
  */
-export function rescue(
-  handler: RescueHandler,
+// Method overload: `args` inferred as `Parameters<M>` from the method.
+// `ctx` is a union because `@rule` may transform a getter into a function,
+// making the stacked decorator appear as a method context at type-check
+// time even when `ctx.kind === "getter"` at runtime.
+export function rescue<
+  This extends object,
+  M extends AnyFn = AnyFn,
+>(
+  handler: RescueHandler<This, M>,
 ): (
   target: unknown,
   ctx:
-    | ClassGetterDecoratorContext<object, unknown>
-    | ClassMethodDecoratorContext<object, (...args: unknown[]) => unknown>,
+    | ClassMethodDecoratorContext<This, M>
+    | ClassGetterDecoratorContext<This, unknown>,
 ) => void;
+// Getter overload: getters take no args, so `args` is `[]`.
+export function rescue<This extends object>(
+  handler: RescueHandler<This, () => unknown>,
+): (
+  target: unknown,
+  ctx: ClassGetterDecoratorContext<object, unknown>,
+) => void;
+// Implementation signature — maximally accepting; the overloads above
+// carry the precise types. `handler` is stored opaquely and invoked via
+// `findRescueHandler`, so its exact generic instantiation is erased here.
+// `any` is required for the impl so the generic overloads (whose `args`
+// tuples vary contravariantly) are all assignable to it.
 export function rescue(
-  handler: RescueHandler,
+  // deno-lint-ignore no-explicit-any
+  handler: any,
 ): (
   target: unknown,
   ctx:
@@ -460,7 +567,7 @@ export function rescue(
     }
     ctx.addInitializer(function (this: object) {
       const meta = metaOn(ctx.metadata);
-      meta.rescue[ctx.name] = handler;
+      meta.rescue[ctx.name] = handler as RescueHandler;
     });
   };
 }

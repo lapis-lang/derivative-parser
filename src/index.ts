@@ -57,6 +57,7 @@ export type {
   ContractMetadata,
   EnsuresPredicate,
   InvariantPredicate,
+  OldSnapshot,
   ParseFailure,
   RequiresPredicate,
   RescueHandler,
