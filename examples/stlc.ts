@@ -625,6 +625,18 @@ export class STLCTypeCheck
     return (ctx as TypeEnv).extend(name, type);
   }
 
+  /** Abstraction typing rule (Abs).  The body's type is checked under the
+   * extended context; the result is the function type `σ → τ`. */
+  @ensures(
+    (_self, _args, _old, result) => result instanceof TFun,
+    {
+      rule: "T-Abs",
+      role: "conclusion",
+      formula: "result : σ → τ",
+      description:
+        "the abstraction has a function type from the parameter's type to the body's type",
+    },
+  )
   protected lam(_param: string, type: Type, body: Type): Type {
     return new TFun(type, body);
   }
@@ -632,10 +644,31 @@ export class STLCTypeCheck
    * Application typing rule (App).  `@requires` enforces domain match;
    * on failure returns `undefined` (graceful). `args`/`result` types are
    * inferred from the method signature — no manual annotation needed.
+   *
+   * The second argument to `@requires` / `@ensures` is arbitrary declarative
+   * metadata — the library imposes no schema; these keys (`rule`, `role`,
+   * `formula`) are this example's choice. Both the predicate and the meta
+   * are exposed reflectively via `STLCTypeCheck.metadata`.
    */
-  @requires((_self, fn, arg) => fn instanceof TFun && typeEq(fn.dom, arg))
-  @ensures((_self, _args, _old, result) =>
-    result instanceof TVar || result instanceof TFun
+  @requires(
+    (_self, fn, arg) => fn instanceof TFun && typeEq(fn.dom, arg),
+    {
+      rule: "T-App",
+      role: "premise",
+      formula: "fn : σ → τ  ∧  arg <: σ",
+      description:
+        "function must have a function type and argument must be a subtype of its domain",
+    },
+  )
+  @ensures(
+    (_self, _args, _old, result) =>
+      result instanceof TVar || result instanceof TFun,
+    {
+      rule: "T-App",
+      role: "conclusion",
+      formula: "result : τ",
+      description: "the application has the function's return type",
+    },
   )
   protected app(fn: Type, _arg: Type): Type {
     // The premise is enforced by @requires; the body is the rule's conclusion.
@@ -645,8 +678,15 @@ export class STLCTypeCheck
     return body;
   }
   /** Variable typing rule (Var).  `@requires` checks binding in ctx. */
-  @requires((_self, name, ctx) =>
-    ctx instanceof TypeEnv && ctx.lookup(name) !== undefined
+  @requires(
+    (_self, name, ctx) =>
+      ctx instanceof TypeEnv && ctx.lookup(name) !== undefined,
+    {
+      rule: "T-Var",
+      role: "premise",
+      formula: "Γ(x) = τ",
+      description: "the variable must be bound in the typing context",
+    },
   )
   protected varRef(name: string, ctx: unknown): Type {
     return (ctx as TypeEnv).lookup(name) as Type;
@@ -662,7 +702,7 @@ export class STLCTypeCheck
   }
 
   /** Override `appProd` to type-check App via `chain`. */
-  @rule
+  @rule({ rule: "T-App", production: "appProd" })
   protected override appProd(ctx: unknown): Parser<Type> {
     return or(
       this.appProd(ctx)

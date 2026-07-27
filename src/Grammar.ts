@@ -10,6 +10,10 @@ import { treeKey } from "./util/tree_key.ts";
 import {
   _markProduction,
   assertInvariants,
+  collectMetadata,
+  type ContractMeta,
+  type ContractMetadataReport,
+  metaOn,
   wrapWithContracts,
 } from "./contracts.ts";
 import {
@@ -92,6 +96,20 @@ export abstract class Grammar<S extends GrammarShape = GrammarShape> {
 
   /** The grammar's entry production. Subclasses must override. */
   abstract start(): Parser<S[keyof S]>;
+
+  /**
+   * Aggregated contract metadata for this grammar class, walked across the
+   * whole inheritance chain (most-derived first). Exposes both the
+   * executable predicates and the declarative metadata for each
+   * `@requires` / `@ensures` / `@invariant` / `@rule` contract.
+   *
+   * Because this is a *static* getter, the predicates in the report are
+   * unbound — when invoking a predicate reflectively, pass the instance
+   * as the first (`self`) argument.
+   */
+  static get metadata(): ContractMetadataReport {
+    return collectMetadata(this);
+  }
 
   /* ---- sigspace ---- */
 
@@ -243,10 +261,49 @@ export function rule<T, A extends unknown[]>(
   target: (this: Grammar, ...args: A) => Parser<T>,
   ctx: RuleMethodCtx,
 ): (this: Grammar, ...args: A) => Parser<T>;
-export function rule(
-  target: (this: Grammar, ...args: unknown[]) => Parser<unknown>,
+/** Factory form: `@rule(meta)` — attach declarative metadata to a getter or method. */
+export function rule<T>(
+  meta: ContractMeta,
+): <A extends unknown[] = []>(
+  target: (this: Grammar, ...args: A) => Parser<T>,
   ctx: RuleGetterCtx | RuleMethodCtx,
-): (this: Grammar, ...args: unknown[]) => Parser<unknown> {
+) => (this: Grammar, ...args: A) => Parser<T>;
+export function rule(
+  targetOrMeta:
+    | ((this: Grammar, ...args: unknown[]) => Parser<unknown>)
+    | ContractMeta,
+  ctx?: RuleGetterCtx | RuleMethodCtx,
+): unknown {
+  // Factory form: `@rule(meta)` — called with the meta object first.
+  // Return the actual decorator that receives the target + ctx.
+  if (typeof targetOrMeta !== "function") {
+    const meta = targetOrMeta;
+    if (meta === null || typeof meta !== "object") {
+      throw new Error(
+        "@rule(meta) requires a ContractMeta object (Record<string, unknown>); " +
+          `got ${meta === null ? "null" : typeof meta}`,
+      );
+    }
+    return (target: RuleTarget, ctx: RuleGetterCtx | RuleMethodCtx) =>
+      applyRule(target, ctx, meta);
+  }
+  // Bare form: `@rule` — called with the target + ctx directly.
+  return applyRule(targetOrMeta, ctx!);
+}
+
+/** Internal alias for the rule target function type. */
+type RuleTarget = (this: Grammar, ...args: unknown[]) => Parser<unknown>;
+
+/** Shared implementation for both bare `@rule` and `@rule(meta)`. */
+function applyRule(
+  target: RuleTarget,
+  ctx: RuleGetterCtx | RuleMethodCtx,
+  meta?: ContractMeta,
+): RuleTarget {
+  // Register `@rule` metadata on the class's Symbol.metadata directly in
+  // the decorator body so it is available statically (without instantiation)
+  // and marks the feature as a production (`isRule: true` in the report).
+  metaOn(ctx.metadata).ruleMeta[ctx.name] = meta;
   if (ctx.kind === "getter") {
     return _markProduction(function (this: Grammar): Parser<unknown> {
       return this._ruleSlot(target, () => target.call(this));

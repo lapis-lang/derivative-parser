@@ -10,12 +10,14 @@ import {
   assert,
   assertInvariants,
   AssertionError,
+  collectMetadata,
   ContractError,
   ensures,
   getCheckedMode,
   iff,
   implies,
   invariant,
+  metadataOf,
   requires,
   setCheckedMode,
 } from "../src/contracts.ts";
@@ -861,4 +863,314 @@ Deno.test("@rescue — infers args type from the decorated method", () => {
     handler!(d, { reason: "test", production: "appProd" }, [new TypeEnv()]),
     true,
   );
+});
+
+/* ======================================================================
+ *  Reflective contract metadata
+ * ====================================================================== */
+
+Deno.test("metadata — @requires(pred, meta) stores meta retrievable via metadataOf", () => {
+  class MetaReqDemo extends ContractedGrammar {
+    @requires(
+      (_self: MetaReqDemo, x: number) => x >= 0,
+      { rule: "non-negative", description: "x must be non-negative" },
+    )
+    sqrt(x: number): number | undefined {
+      return Math.sqrt(x);
+    }
+  }
+  const meta = metadataOf(MetaReqDemo);
+  assertEquals(meta?.requires.sqrt.length, 1);
+  assertEquals(meta!.requires.sqrt[0].meta, {
+    rule: "non-negative",
+    description: "x must be non-negative",
+  });
+  // The predicate is also exposed.
+  assertEquals(typeof meta!.requires.sqrt[0].predicate, "function");
+});
+
+Deno.test("metadata — @ensures(pred, meta) stores meta retrievable via metadataOf", () => {
+  class MetaEnsDemo extends ContractedGrammar {
+    @ensures(
+      (self: MetaEnsDemo, _args, _old) => self.value >= 0,
+      { rule: "non-negative-result" },
+    )
+    inc(): void {
+      this.value++;
+    }
+    value = 0;
+  }
+  const meta = metadataOf(MetaEnsDemo);
+  assertEquals(meta?.ensures.inc.length, 1);
+  assertEquals(meta!.ensures.inc[0].meta, { rule: "non-negative-result" });
+});
+
+Deno.test("metadata — @invariant(pred, meta) stores meta retrievable via metadataOf", () => {
+  @invariant(
+    (self: MetaInvDemo) => self.value >= 0,
+    { description: "value is non-negative" },
+  )
+  class MetaInvDemo extends ContractedGrammar {
+    value = 0;
+  }
+  const meta = metadataOf(MetaInvDemo);
+  assertEquals(meta?.invariants.length, 1);
+  assertEquals(meta!.invariants[0].meta, {
+    description: "value is non-negative",
+  });
+});
+
+Deno.test("metadata — Grammar.metadata aggregates across the inheritance chain", () => {
+  @invariant((self: MetaBase) => self.n >= 0, { rule: "base-inv" })
+  class MetaBase extends ContractedGrammar {
+    n = 0;
+    @requires((_self: MetaBase, x: number) => x >= 0, { rule: "base-req" })
+    setN(_x: number): void {}
+  }
+  class MetaSub extends MetaBase {
+    @requires((_self: MetaSub, x: number) => x === 42, { rule: "sub-req" })
+    override setN(_x: number): void {}
+  }
+  const report = MetaSub.metadata;
+  // Both base and subclass @requires are aggregated (most-derived first).
+  assertEquals(report.methods.setN.requires.length, 2);
+  assertEquals(report.methods.setN.requires[0].meta, { rule: "sub-req" });
+  assertEquals(report.methods.setN.requires[1].meta, { rule: "base-req" });
+  // Base invariant is included.
+  assertEquals(report.invariants.length, 1);
+  assertEquals(report.invariants[0].meta, { rule: "base-inv" });
+});
+
+Deno.test("metadata — backward compat: @requires(pred) with no meta still works", () => {
+  class NoMetaDemo extends ContractedGrammar {
+    @requires((_self: NoMetaDemo, x: number) => x >= 0)
+    sqrt(x: number): number | undefined {
+      return Math.sqrt(x);
+    }
+  }
+  const meta = metadataOf(NoMetaDemo);
+  assertEquals(meta?.requires.sqrt.length, 1);
+  // meta is undefined when not supplied.
+  assertEquals(meta!.requires.sqrt[0].meta, undefined);
+  assertEquals(typeof meta!.requires.sqrt[0].predicate, "function");
+  // Runtime enforcement unchanged.
+  const d = new NoMetaDemo();
+  assertEquals(d.sqrt(4), 2);
+  assertEquals(d.sqrt(-1), undefined);
+});
+
+Deno.test("metadata — multiple stacked @requires with distinct metas preserve order", () => {
+  class StackedDemo extends ContractedGrammar {
+    @requires((_self: StackedDemo, x: number) => x >= 0, { tag: "first" })
+    @requires((_self: StackedDemo, x: number) => x <= 100, { tag: "second" })
+    f(x: number): number {
+      return x;
+    }
+  }
+  const meta = metadataOf(StackedDemo);
+  assertEquals(meta!.requires.f.length, 2);
+  // Decorators apply bottom-up, so "second" is registered first.
+  assertEquals(meta!.requires.f[0].meta, { tag: "second" });
+  assertEquals(meta!.requires.f[1].meta, { tag: "first" });
+});
+
+Deno.test("metadata — @rule(meta) stores ruleMeta and sets isRule in the report", () => {
+  class RuleMetaDemo extends ContractedGrammar {
+    @rule({ rule: "T-App", production: "appProd" })
+    protected appProd(_ctx: unknown): Parser<unknown> {
+      return empty();
+    }
+  }
+  const report = RuleMetaDemo.metadata;
+  assertEquals(report.methods.appProd.isRule, true);
+  assertEquals(report.methods.appProd.rule?.meta, {
+    rule: "T-App",
+    production: "appProd",
+  });
+});
+
+Deno.test("metadata — bare @rule still works and sets isRule with no meta", () => {
+  class BareRuleDemo extends ContractedGrammar {
+    @rule
+    protected get prod(): Parser<unknown> {
+      return empty();
+    }
+  }
+  const report = BareRuleDemo.metadata;
+  assertEquals(report.methods.prod.isRule, true);
+  assertEquals(report.methods.prod.rule?.meta, undefined);
+});
+
+Deno.test("metadata — extensibility: arbitrary fields round-trip through storage", () => {
+  class ExtDemo extends ContractedGrammar {
+    @requires(
+      (_self: ExtDemo, x: number) => x > 0,
+      {
+        custom: "anything",
+        nested: { a: 1, b: [2, 3] },
+        number: 42,
+        flag: true,
+      },
+    )
+    f(x: number): number {
+      return x;
+    }
+  }
+  const meta = metadataOf(ExtDemo);
+  assertEquals(meta!.requires.f[0].meta, {
+    custom: "anything",
+    nested: { a: 1, b: [2, 3] },
+    number: 42,
+    flag: true,
+  });
+});
+
+Deno.test("metadata — accessible when setCheckedMode(false)", () => {
+  const prior = getCheckedMode();
+  try {
+    setCheckedMode(false);
+    class OffDemo extends ContractedGrammar {
+      @requires((_self: OffDemo, x: number) => x >= 0, { rule: "off-test" })
+      sqrt(x: number): number | undefined {
+        return Math.sqrt(x);
+      }
+    }
+    // Metadata is class-level (static), independent of checked mode.
+    const meta = metadataOf(OffDemo);
+    assertEquals(meta!.requires.sqrt[0].meta, { rule: "off-test" });
+    const report = OffDemo.metadata;
+    assertEquals(report.methods.sqrt.requires[0].meta, { rule: "off-test" });
+  } finally {
+    setCheckedMode(prior);
+  }
+});
+
+Deno.test("metadata — predicate in the report is callable and behaves like the runtime check", () => {
+  class CallableDemo extends ContractedGrammar {
+    @requires(
+      (_self: CallableDemo, x: number) => x >= 0,
+      { rule: "non-negative" },
+    )
+    sqrt(x: number): number | undefined {
+      return Math.sqrt(x);
+    }
+  }
+  const report = CallableDemo.metadata;
+  const pred = report.methods.sqrt.requires[0].predicate;
+  const d = new CallableDemo();
+  // Invoke reflectively, passing the instance as `self`.
+  assertEquals(pred(d, 4), true);
+  assertEquals(pred(d, -1), false);
+});
+
+Deno.test("metadata — collectMetadata accepts an instance or a class", () => {
+  class BothDemo extends ContractedGrammar {
+    @requires((_self: BothDemo, x: number) => x >= 0, { rule: "r" })
+    f(x: number): number {
+      return x;
+    }
+  }
+  const fromClass = collectMetadata(BothDemo);
+  assertEquals(fromClass.methods.f.requires[0].meta, { rule: "r" });
+  const d = new BothDemo();
+  const fromInstance = collectMetadata(d);
+  assertEquals(fromInstance.methods.f.requires[0].meta, { rule: "r" });
+});
+
+Deno.test("metadata — symbol-keyed production is surfaced in the report", () => {
+  // `for...in` would miss symbol keys; `Reflect.ownKeys` includes them.
+  const sym = Symbol("symProd");
+  class SymDemo extends ContractedGrammar {
+    @requires((_self: SymDemo, x: number) => x >= 0, { rule: "sym-req" })
+    [sym](_x: number): number {
+      return _x;
+    }
+  }
+  const report = SymDemo.metadata;
+  // The symbol-keyed contract is surfaced in the report (Reflect.ownKeys
+  // includes symbol keys, unlike `for...in`).
+  const entry = report.methods[sym];
+  assertEquals(entry !== undefined, true);
+  assertEquals(entry!.requires.length, 1);
+  assertEquals(entry!.requires[0].meta, { rule: "sym-req" });
+  // Also retrievable via the lower-level metadataOf accessor.
+  const meta = metadataOf(SymDemo);
+  assertEquals(meta!.requires[sym].length, 1);
+  assertEquals(meta!.requires[sym][0].meta, { rule: "sym-req" });
+});
+
+Deno.test("metadata — @rule(meta) on a getter stores ruleMeta and sets isRule", () => {
+  class RuleGetterMetaDemo extends ContractedGrammar {
+    @rule({ rule: "T-Var", production: "varProd" })
+    protected get varProd(): Parser<unknown> {
+      return empty();
+    }
+  }
+  const report = RuleGetterMetaDemo.metadata;
+  assertEquals(report.methods.varProd.isRule, true);
+  assertEquals(report.methods.varProd.rule?.meta, {
+    rule: "T-Var",
+    production: "varProd",
+  });
+});
+
+Deno.test("metadata — @invariant meta aggregates across the inheritance chain", () => {
+  @invariant((self: InvChainBase) => self.n >= 0, { rule: "base-inv" })
+  class InvChainBase extends ContractedGrammar {
+    n = 0;
+  }
+  @invariant((self: InvChainSub) => self.n <= 10, { rule: "sub-inv" })
+  class InvChainSub extends InvChainBase {
+  }
+  const report = InvChainSub.metadata;
+  // Both base and subclass invariant meta are concatenated (most-derived first).
+  assertEquals(report.invariants.length, 2);
+  assertEquals(report.invariants[0].meta, { rule: "sub-inv" });
+  assertEquals(report.invariants[1].meta, { rule: "base-inv" });
+});
+
+Deno.test("metadata — @ensures meta aggregates across the inheritance chain", () => {
+  class EnsChainBase extends ContractedGrammar {
+    @ensures(
+      (self: EnsChainBase, _args, _old) => self.value >= 0,
+      { rule: "base-ens" },
+    )
+    bump(): void {
+      this.value++;
+    }
+    value = 0;
+  }
+  class EnsChainSub extends EnsChainBase {
+    @ensures(
+      (self: EnsChainSub, _args, _old) => self.value <= 10,
+      { rule: "sub-ens" },
+    )
+    override bump(): void {
+      super.bump();
+    }
+  }
+  const report = EnsChainSub.metadata;
+  // Both base and subclass @ensures are aggregated (most-derived first).
+  assertEquals(report.methods.bump.ensures.length, 2);
+  assertEquals(report.methods.bump.ensures[0].meta, { rule: "sub-ens" });
+  assertEquals(report.methods.bump.ensures[1].meta, { rule: "base-ens" });
+});
+
+Deno.test("metadata — @rule(null) throws a clear error", () => {
+  // `@rule(null)` is not a valid production target nor a ContractMeta object.
+  let thrown: Error | null = null;
+  try {
+    // The factory is invoked at class-definition time.
+    class BadRuleNullDemo extends ContractedGrammar {
+      @rule(null as unknown as Record<string, unknown>)
+      protected get prod(): Parser<unknown> {
+        return empty();
+      }
+    }
+    void BadRuleNullDemo;
+  } catch (e) {
+    thrown = e as Error;
+  }
+  assertEquals(thrown !== null, true);
+  assertEquals((thrown as Error).message.includes("@rule(meta)"), true);
 });

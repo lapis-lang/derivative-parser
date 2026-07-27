@@ -19,6 +19,8 @@ import {
   STLCTypeCheck,
   STLCTyped,
   type Term,
+  TFun,
+  TVar,
   TypeEnv,
   ValEnv,
 } from "./stlc.ts";
@@ -85,3 +87,44 @@ const appTT = [
 ][0]!;
 console.log(`  (\\x:Int -> Int. x) (\\y:Int. y) :`);
 console.log(`    ${appTT.print()}`);
+
+/* ── Reflective contract metadata ────────────────────────────────────── */
+
+console.log("\n— STLCTypeCheck.metadata (reflective contract metadata) —");
+// `Grammar.metadata` exposes both the executable predicates and the
+// declarative metadata for each @requires/@ensures/@invariant/@rule,
+// aggregated across the inheritance chain. The metadata object's shape
+// is the author's choice — the library imposes no schema.
+const report = STLCTypeCheck.metadata;
+for (const [name, entry] of Object.entries(report.methods)) {
+  if (
+    entry.requires.length === 0 && entry.ensures.length === 0 && !entry.isRule
+  ) {
+    continue;
+  }
+  console.log(`  ${name}:`);
+  for (const c of entry.requires) {
+    const m = c.meta as { rule?: string; formula?: string } | undefined;
+    console.log(`    @requires  ${m?.formula ?? "(no formula)"}`);
+  }
+  for (const c of entry.ensures) {
+    const m = c.meta as { rule?: string; formula?: string } | undefined;
+    console.log(`    @ensures   ${m?.formula ?? "(no formula)"}`);
+  }
+  if (entry.isRule) {
+    const m = entry.rule?.meta as { rule?: string } | undefined;
+    console.log(`    @rule      ${m?.rule ?? "(bare)"}`);
+  }
+}
+// Predicates are exposed too — invoke one reflectively (passing the
+// instance as `self`). Here we check the T-App premise on a well-typed
+// application: TFun(Int, Int) applied to Int.
+const appRequires = report.methods.app?.requires[0];
+if (appRequires) {
+  const ok = appRequires.predicate(
+    tc,
+    new TFun(new TVar("Int"), new TVar("Int")),
+    new TVar("Int"),
+  );
+  console.log(`  reflectively invoking T-App @requires predicate → ${ok}`);
+}

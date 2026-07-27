@@ -503,6 +503,82 @@ import { setCheckedMode } from '@lapis-lang/zipper-grammar';
 setCheckedMode(false);  // all instances skip checks — zero overhead
 ```
 
+### Reflective contract metadata
+
+Each contract decorator accepts an optional second argument — an arbitrary
+metadata object whose shape the library does **not** define. The metadata is
+stored alongside the executable predicate (as a `{ predicate, meta? }` pair)
+and exposed reflectively, so you can build documentation generators, test
+generators, or verifiers on top without the library committing to any
+specific use case.
+
+```ts
+import { requires, ensures } from '@lapis-lang/zipper-grammar';
+
+// The second argument is an arbitrary object — these keys (rule, role,
+// formula) are this author's choice; a JSON/CSV grammar could use entirely
+// different keys. The library stores and round-trips it opaquely.
+@requires(
+    (_self, fn, arg) => fn instanceof TFun && typeEq(fn.dom, arg),
+    { rule: 'T-App', role: 'premise', formula: 'fn : σ → τ  ∧  arg <: σ' },
+)
+@ensures(
+    (_self, _args, _old, result) => result instanceof TVar || result instanceof TFun,
+    { rule: 'T-App', role: 'conclusion', formula: 'result : τ' },
+)
+protected app(fn: Type, _arg: Type): Type { return (fn as TFun).cod; }
+```
+
+`@rule` accepts the same optional metadata, in factory form:
+
+```ts
+import { rule } from '@lapis-lang/zipper-grammar';
+
+@rule({ rule: 'T-App', production: 'appProd' })
+protected override appProd(ctx: unknown): Parser<Type> { /* ... */ }
+```
+
+The `Grammar.metadata` static getter aggregates every contract across the
+inheritance chain (most-derived first), exposing **both** the executable
+predicate and the declarative metadata for each contract:
+
+```ts
+import { STLCTypeCheck } from './stlc.ts';
+
+const report = STLCTypeCheck.metadata;
+// report.methods.app.requires[0].meta  → { rule: 'T-App', role: 'premise', formula: '...' }
+// report.methods.app.requires[0].predicate  → the executable (self, fn, arg) => boolean
+
+// Invoke a predicate reflectively (pass the instance as `self`):
+const tc = new STLCTypeCheck();
+const ok = report.methods.app.requires[0].predicate(
+    tc, new TFun(new TVar('Int'), new TVar('Int')), new TVar('Int'),
+);  // → true
+```
+
+The report shape (shown with `Function` for brevity; the exported
+`RequiresContract` / `EnsuresContract` / `InvariantContract` types use the
+precise `RequiresPredicate` / `EnsuresPredicate` / `InvariantPredicate`
+predicate signatures):
+
+```ts
+interface ContractMetadataReport {
+    methods: Record<PropertyKey, {
+        requires: { predicate: Function; meta?: ContractMeta }[];
+        ensures:  { predicate: Function; meta?: ContractMeta }[];
+        rule?:    { meta?: ContractMeta };
+        isRule:   boolean;
+    }>;
+    invariants: { predicate: Function; meta?: ContractMeta }[];
+}
+```
+
+`ContractMeta` is `Record<string, unknown>` - a schema-less object. The
+lower-level `metadataOf(Class)`, `chainMetadata(instance)`, and
+`collectMetadata(instanceOrClass)` accessors are also exported for tooling
+that needs per-class or per-instance access. Metadata is class-level
+(static), so it is accessible even when `setCheckedMode(false)`.
+
 ## Source positions
 
 Every `.map()` callback receives a `Span` as its second argument describing
@@ -618,6 +694,10 @@ The `@rule` decorator can wrap either a **getter** or a **method**:
 | `@invariant`    | decorator | Class invariant; checked after construction and after each contracted call. AND-ed across inheritance. |
 | `@rescue`       | decorator | Parse-failure recovery; handler `(self, failure, args, retry?) => unknown` invoked when a production yields an empty forest. `args` inferred from the decorated production (`Parameters`; `[]` for getters). Inherited (most-derived wins). |
 | `setCheckedMode(b)` / `getCheckedMode()` | function | Toggle the global default for contract enforcement. Applies live to all instances (existing and new). When off, no Proxy is created for new instances and existing Proxies skip checks (zero overhead). |
+| `Grammar.metadata` | static getter | Aggregated contract metadata report across the inheritance chain — exposes both predicates and declarative meta. |
+| `collectMetadata(instanceOrClass)` | function | Build a `ContractMetadataReport` from an instance or a class. |
+| `metadataOf(Class)` / `chainMetadata(instance)` | function | Lower-level per-class / per-instance metadata accessors. |
+| `ContractMeta` | type | `Record<string, unknown>` — arbitrary, schema-less metadata object attached via the optional second arg of `@requires`/`@ensures`/`@invariant`/`@rule`. |
 | `ContractError` / `AssertionError` | class | Error types thrown by `@ensures`/`@invariant` and `assert` respectively. |
 | `ParseFailure` / `Diagnostic` | type | `{ reason, message?, ... }` — failure description passed to `@rescue` / carried by `diagnostic()`. |
 
