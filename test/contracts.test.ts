@@ -282,18 +282,17 @@ Deno.test("@ensures — throws ContractError when postcondition fails", () => {
 Deno.test("@ensures — `old` snapshot reflects pre-call state", () => {
   const capturedOldN: { value: number | null } = { value: null };
   class OldDemo extends ContractedGrammar {
-    protected _n = 10;
-    get n(): number {
-      return this._n;
-    }
-    @ensures((self: OldDemo, _args, old: OldDemo) => {
-      // `old` is a shallow snapshot of own enumerable props (e.g. `_n`),
-      // not a live instance — getters are not copied.
-      capturedOldN.value = (old as unknown as { _n: number })._n;
-      return self.n === (old as unknown as { _n: number })._n + 1;
+    // Public data field so `OldSnapshot<OldDemo>` exposes it typed.
+    // (Mapped types can't surface protected/private keys as public —
+    // a TypeScript limitation. The runtime snapshot copies them too;
+    // see the "protected field" test below.)
+    n = 10;
+    @ensures((self: OldDemo, _args, old) => {
+      capturedOldN.value = old.n;
+      return self.n === old.n + 1;
     })
     bump(): void {
-      this._n++;
+      this.n++;
     }
   }
   const d = new OldDemo();
@@ -304,6 +303,72 @@ Deno.test("@ensures — `old` snapshot reflects pre-call state", () => {
     10,
     "old snapshot should reflect pre-call value",
   );
+});
+
+Deno.test("@ensures — `old` excludes getters and methods (data-only snapshot)", () => {
+  const seenKeys: { value: string[] } = { value: [] };
+  class SnapshotShapeDemo extends ContractedGrammar {
+    data = 1;
+    get computed(): number {
+      return this.data * 2;
+    }
+    @ensures((_self, _args, old) => {
+      seenKeys.value = Object.keys(old as Record<string, unknown>);
+      return true;
+    })
+    bump(): void {
+      this.data++;
+    }
+  }
+  const d = new SnapshotShapeDemo();
+  d.bump();
+  // `data` is an own enumerable data field → copied. `computed` is a getter
+  // (not an own data prop) and `bump` is a prototype method → both absent.
+  // (Grammar's own cache fields like `_ruleCache` may appear; we only assert
+  // the demo-specific shape here.)
+  assertEquals(seenKeys.value.includes("data"), true);
+  assertEquals(seenKeys.value.includes("computed"), false);
+  assertEquals(seenKeys.value.includes("bump"), false);
+});
+
+Deno.test("@ensures — infers args tuple and result type from the method", () => {
+  // No manual `args: [Type, Type]` / `result: Type` annotation: the types
+  // flow from `app(fn: Type, arg: Type): Type`. A wrong predicate body
+  // (e.g. `args[0].nonexistent`) would be a *compile* error — the type
+  // safety this test guards.
+  class TypeEnv {
+    lookup(_n: string): string | undefined {
+      return "Int";
+    }
+  }
+  class TVar {
+    constructor(readonly name: string) {}
+  }
+  class TFun {
+    constructor(readonly dom: string, readonly cod: string) {}
+  }
+  type Type = TVar | TFun;
+
+  class InferenceDemo extends ContractedGrammar {
+    @ensures((_self, args, _old, result) =>
+      args[0] instanceof TFun && (result instanceof TVar ||
+        result instanceof TFun)
+    )
+    app(fn: Type, _arg: Type): Type {
+      // Return a real Type instance so the postcondition holds.
+      return fn instanceof TFun ? new TVar(fn.cod) : new TVar("Int");
+    }
+    @requires((_self, _name, ctx) =>
+      ctx instanceof TypeEnv && ctx.lookup("x") !== undefined
+    )
+    varRef(_name: string, ctx: TypeEnv): Type {
+      return new TVar(ctx.lookup("x")!) as Type;
+    }
+  }
+  const d = new InferenceDemo();
+  const ty = d.app(new TFun("Int", "Int"), new TVar("Int"));
+  assertEquals(ty instanceof TVar || ty instanceof TFun, true);
+  assertEquals(d.varRef("x", new TypeEnv()) instanceof TVar, true);
 });
 
 Deno.test("@ensures — disabled when checkedMode is off", () => {
@@ -735,5 +800,31 @@ Deno.test("@rescue — can decorate a getter production", () => {
   assertEquals(
     handler!(d, { reason: "test", production: "prod" }, []),
     "getter-rescue",
+  );
+});
+
+Deno.test("@rescue — infers args type from the decorated method", () => {
+  // No manual `args: [TypeEnv]` annotation: `args` flows from
+  // `appProd(ctx: TypeEnv): Parser<unknown>`. A wrong body (e.g.
+  // `args[0].nonexistent`) would be a *compile* error.
+  class TypeEnv {
+    bound = new Set(["x", "y"]);
+  }
+  class RescueInferenceDemo extends ContractedGrammar {
+    @rescue((_self, _failure, args) =>
+      args[0] instanceof TypeEnv && args[0].bound.has("x")
+    )
+    @rule
+    protected appProd(_ctx: TypeEnv): Parser<unknown> {
+      return empty();
+    }
+  }
+  const d = new RescueInferenceDemo();
+  const handler = findRescueHandler(d, "appProd");
+  assertEquals(typeof handler, "function");
+  // The inferred handler sees `args: [TypeEnv]` and returns true.
+  assertEquals(
+    handler!(d, { reason: "test", production: "appProd" }, [new TypeEnv()]),
+    true,
   );
 });
