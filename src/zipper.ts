@@ -490,14 +490,37 @@ type WorklistEntry = { readonly mem: Mem; readonly value: unknown };
  * race).
  */
 export class ZipperDriver {
+  /** Pending (Mem, value) pairs to propagate upward at the next position. */
   worklist: WorklistEntry[] = [];
+  /** Completed top-level parse values (the parse forest); reset each pass. */
   topValues: unknown[] = [];
+  /** Current position sentinel; minted fresh per token step. */
   pos: Pos = freshPos();
+  /** The token currently under the cursor, or `T_EOF` before/after the stream. */
   currentToken: Tok = T_EOF;
   /** When true, only track whether a value was produced (not all values). */
   recognizeOnly = false;
   /** Maps each Pos sentinel to its 0-based character offset in the source. */
   readonly posToOffset: Map<Pos, number> = new Map<Pos, number>();
+  /** Reverse lookup: offset → Pos. Maintained alongside {@link posToOffset} for O(1) {@link stepReplay}. */
+  readonly offsetToPosMap: Map<number, Pos> = new Map<number, Pos>();
+  /**
+   * Base offset of the initial position. Defaults to 0; set to a non-zero
+   * value (e.g. via {@link withInitialOffset}) when parsing a segment of a
+   * larger source so that `posToOffset` — and hence spans in semantic
+   * actions — map directly to absolute source coordinates.
+   */
+  initialOffset = 0;
+
+  /**
+   * Set the base offset of the initial position and return `this` for
+   * chaining. Use when parsing a segment of a larger source so spans land
+   * in absolute coordinates. Must be called before `parse`/`recognize`.
+   */
+  withInitialOffset(offset: number): this {
+    this.initialOffset = offset;
+    return this;
+  }
 
   /* ── Tree-token stream state (for tree-consuming grammars) ────────── */
   //
@@ -508,6 +531,7 @@ export class ZipperDriver {
   // cursor; `currentTreeToken` is that token or `undefined` past the end.
   // Completions are scheduled at a target offset via `scheduleTreeCompletion`
   // and drained by `_runTreeSteps`, which processes one offset at a time.
+  /** The tree-token stream being consumed by `parseTree` (tree-consuming grammars). */
   private treeTokens: readonly TreeTok[] = [];
   /** 0-based index of the tree token currently under the cursor. */
   treeCursorOffset = 0;
@@ -521,6 +545,7 @@ export class ZipperDriver {
     this.treeCursorOffset = offset;
     const next = freshPos();
     this.posToOffset.set(next, offset);
+    this.offsetToPosMap.set(offset, next);
     this.pos = next;
     this.currentTreeToken = this.treeTokens[offset];
   }
@@ -572,7 +597,9 @@ export class ZipperDriver {
     this.topValues = [];
     for (const { mem, value } of w) this.completeAt(mem, value);
     const next = freshPos();
-    this.posToOffset.set(next, token.offset + 1);
+    const offset = token.offset + 1;
+    this.posToOffset.set(next, offset);
+    this.offsetToPosMap.set(offset, next);
     this.pos = next;
   }
 
@@ -667,11 +694,13 @@ export class ZipperDriver {
     this.topValues = [];
     this.recognizeOnly = false;
     this.posToOffset.clear();
+    this.offsetToPosMap.clear();
     this.treeTokens = treeTokens;
     this.treeCursorOffset = 0;
     this.treePending = new Map();
     const initialPos = freshPos();
     this.posToOffset.set(initialPos, 0);
+    this.offsetToPosMap.set(0, initialPos);
     this.pos = initialPos;
     this.currentTreeToken = treeTokens[0];
     this.currentToken = T_EOF;
@@ -691,14 +720,98 @@ export class ZipperDriver {
     this.step(T_EOF);
   }
 
-  private _init(start: Exp): void {
+  /**
+   * Initialise the driver for a stepwise parse rooted at `start`.
+   *
+   * This is the entry point for the **token-stream API** — the
+   * derivative-as-continuation primitive. After `init`, call {@link step}
+   * once per token (feeding input as it arrives), then {@link flushEof} to
+   * drain final reductions, then {@link forest} to read the results. The
+   * live driver is the resumable continuation: pause when input is
+   * exhausted, resume when more arrives — no snapshot needed.
+   *
+   * @param start  The grammar's root `Exp` to drive.
+   * @param options  Optional configuration.
+   * @param options.keepMemoMap  When `true`, preserve the existing
+   *   `posToOffset`/`offsetToPosMap` so {@link stepReplay} can reuse prior-pass
+   *   `Pos` sentinels for memo hits. Used by {@link Grammar.reparseIncremental}.
+   *   Default `false` (clears the maps for a fresh pass).
+   */
+  init(start: Exp, options?: { readonly keepMemoMap?: boolean }): void {
+    this._init(start, options?.keepMemoMap ?? false);
+  }
+
+  /**
+   * Flush the engine with an EOF token, draining any final reductions to
+   * the top. Call after the last {@link step} to complete the parse.
+   */
+  flushEof(): void {
+    this.step(T_EOF);
+  }
+
+  /**
+   * Return the parse forest accumulated so far. Each call returns a fresh
+   * snapshot `Set` of the values produced at the top. For a stepwise parse,
+   * call after {@link flushEof} for the final result, or mid-stream for
+   * partial results.
+   */
+  forest<T>(): Set<T> {
+    return new Set(this.topValues as T[]);
+  }
+
+  /* ── Incremental memo reuse ──────────────────────────────────────── */
+  //
+  // The derivative's self-containment means re-parsing an unchanged prefix
+  // reaches the same `Exp` nodes at the same positions — so `Exp.m` memos
+  // from the prior pass are still valid. The key to reusing them: the memo
+  // hit test is `m0.startPos === driver.pos` (object identity of `Pos`). A
+  // fresh `step` mints a new `Pos`, breaking the match. `stepReplay` instead
+  // looks up the existing `Pos` for the token's offset (if present) and
+  // reuses it, so prior-pass memos hit. Only the edited region (new offsets)
+  // mints fresh `Pos`.
+
+  /**
+   * Consume one token, reusing the existing `Pos` for `token.offset` if the
+   * driver has already visited that offset in a prior pass. This lets
+   * `Exp.m` memos from the prior pass hit on the unchanged prefix, so only
+   * the edited region is re-derived — O(affected region) re-parsing.
+   *
+   * Use this instead of {@link step} when re-parsing after a small edit:
+   * feed the unchanged prefix tokens via `stepReplay` (memo hits), then feed
+   * the edited-region tokens via {@link step} (fresh `Pos`, re-derive), then
+   * the unchanged suffix via `stepReplay` again.
+   */
+  stepReplay(token: Tok): void {
+    this.currentToken = token;
+    const w = this.worklist;
+    this.worklist = [];
+    this.topValues = [];
+    for (const { mem, value } of w) this.completeAt(mem, value);
+    // Reuse the existing Pos for this offset if present; else mint fresh.
+    const offset = token.offset + 1;
+    const existing = this.offsetToPosMap.get(offset);
+    if (existing) {
+      this.pos = existing;
+    } else {
+      const next = freshPos();
+      this.posToOffset.set(next, offset);
+      this.offsetToPosMap.set(offset, next);
+      this.pos = next;
+    }
+  }
+
+  private _init(start: Exp, keepMemoMap = false): void {
     this.topValues = [];
     // Reset to full-forest mode so a reused driver doesn't leak the
     // recognize() suppression flag into a later parse().
     this.recognizeOnly = false;
-    this.posToOffset.clear();
+    if (!keepMemoMap) {
+      this.posToOffset.clear();
+      this.offsetToPosMap.clear();
+    }
     const initialPos = freshPos();
-    this.posToOffset.set(initialPos, 0);
+    this.posToOffset.set(initialPos, this.initialOffset);
+    this.offsetToPosMap.set(this.initialOffset, initialPos);
     this.pos = initialPos;
     this.currentToken = T_EOF;
     // Bootstrap: a top-level Mem collects the result; a SeqCxt descends into

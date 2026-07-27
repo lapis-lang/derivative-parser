@@ -5,8 +5,14 @@
 
 export { Grammar, rule } from "./Grammar.ts";
 export type { Diagnostic, GrammarShape } from "./Grammar.ts";
+export {
+  FixpointDivergenceError,
+  MonotonicityViolationError,
+} from "./Grammar.ts";
 export { Parser, parserOf } from "./Parser.ts";
-export type { Span } from "./zipper.ts";
+export type { AttributionKind, Checkpoint } from "./Parser.ts";
+export { ZipperDriver } from "./zipper.ts";
+export type { Pos, Span, Tok } from "./zipper.ts";
 
 export {
   between,
