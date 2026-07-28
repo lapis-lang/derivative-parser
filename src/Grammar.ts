@@ -6,6 +6,7 @@ import {
   type TreeTok,
   ZipperDriver,
 } from "./zipper.ts";
+import { buildDerivationTrees, type DerivationTree } from "./derivation.ts";
 import { treeKey } from "./util/tree_key.ts";
 import {
   _markProduction,
@@ -69,7 +70,16 @@ export abstract class Grammar<S extends GrammarShape = GrammarShape> {
   _ruleSlot<T>(key: object, build: () => Parser<T>): Parser<T> {
     let hit = this._ruleCache.get(key);
     if (!hit) {
-      hit = new Parser<unknown>(new DelayedExp(() => build()._exp));
+      const delayed = new DelayedExp(() => build()._exp);
+      // Attach the production name (from the @rule getter's bound target) as
+      // the Exp productionLabel, so the derivation sink can label
+      // DerivationNodes. `key` is the getter function; its `name` property
+      // holds the production name (set by the @rule decorator via the
+      // decorator context). Deno/JS engines name getters "get x"; strip the
+      // "get " prefix so the label is just "x".
+      const prodLabel = (key as { name?: string }).name?.replace(/^get /, "");
+      if (prodLabel) delayed.productionLabel = prodLabel;
+      hit = new Parser<unknown>(delayed);
       this._ruleCache.set(key, hit);
     }
     return hit as Parser<T>;
@@ -88,7 +98,13 @@ export abstract class Grammar<S extends GrammarShape = GrammarShape> {
     }
     let hit = inner.get(argKey);
     if (!hit) {
-      hit = new Parser<unknown>(new DelayedExp(() => build()._exp));
+      const delayed = new DelayedExp(() => build()._exp);
+      // Attach the production name (from the @rule method's bound target) as
+      // the Exp productionLabel, so the derivation sink can label
+      // DerivationNodes.
+      const prodLabel = (key as { name?: string }).name;
+      if (prodLabel) delayed.productionLabel = prodLabel;
+      hit = new Parser<unknown>(delayed);
       inner.set(argKey, hit);
     }
     return hit as Parser<T>;
@@ -219,6 +235,54 @@ export abstract class Grammar<S extends GrammarShape = GrammarShape> {
   ): Set<T> {
     assertInvariants(this);
     return new ZipperDriver().parseTree<T>(start._exp, treeTokens);
+  }
+
+  /**
+   * Parse `input` and return the retained derivation trees alongside the
+   * parse forest. This is the opt-in tree-*producing* entry point:
+   * it captures *which `@rule` production matched where, with child
+   * relationships and source spans* as first-class {@link DerivationTree}s.
+   *
+   * The inline single-pass `parse()` path is unaffected — this method sets
+   * a derivation sink on a fresh driver, so only `@rule` productions (whose
+   * `Exp.productionLabel` is set by `@rule`) are recorded. The captured
+   * records are post-processed into trees by completion-order nesting.
+   *
+   * For ambiguous grammars, multiple derivation trees may be produced (one
+   * per top-level derivation); the caller selects which to use.
+   */
+  parseToTree(
+    input: string,
+  ): {
+    readonly forest: Set<S[keyof S]>;
+    readonly trees: readonly DerivationTree[];
+  } {
+    assertInvariants(this);
+    const driver = new ZipperDriver();
+    const { forest, records } = driver.parseWithDerivation<S[keyof S]>(
+      this.start()._exp,
+      this._toTokens(input),
+    );
+    const trees = buildDerivationTrees(records, input);
+    return { forest, trees };
+  }
+
+  /**
+   * Drive the zipper engine with derivation capture and an arbitrary start
+   * parser. Returns the parse forest and the retained derivation trees.
+   */
+  protected _parseToTreeWith<T>(
+    input: string,
+    start: Parser<T>,
+  ): { readonly forest: Set<T>; readonly trees: readonly DerivationTree[] } {
+    assertInvariants(this);
+    const driver = new ZipperDriver();
+    const { forest, records } = driver.parseWithDerivation<T>(
+      start._exp,
+      this._toTokens(input),
+    );
+    const trees = buildDerivationTrees(records, input);
+    return { forest, trees };
   }
 
   /**

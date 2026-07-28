@@ -6,14 +6,7 @@
  */
 
 import { assertEquals, assertNotEquals } from "@std/assert";
-import {
-  flattenTree,
-  Grammar,
-  or,
-  parserOf,
-  rule,
-  TreeExp,
-} from "../src/index.ts";
+import { flattenTree, Grammar, or, rule, treeExp } from "../src/index.ts";
 import type { Parser } from "../src/index.ts";
 
 /* ── A tiny tree algebra for testing ─────────────────────────────────── */
@@ -57,26 +50,20 @@ abstract class AbstractTreeEval extends Grammar<EvalShape> {
   }
 
   protected get numNode(): Parser<number> {
-    return parserOf<number>(
-      new TreeExp("Num", [], (node: unknown) => (node as Num).value),
-    );
+    return treeExp<number>("Num", [], (node: unknown) => (node as Num).value);
   }
   protected get addNode(): Parser<number> {
-    return parserOf<number>(
-      new TreeExp(
-        "Add",
-        [this.expr._exp, this.expr._exp],
-        (_node: unknown, [l, r]: unknown[]) => (l as number) + (r as number),
-      ),
+    return treeExp<number>(
+      "Add",
+      [this.expr, this.expr],
+      (_node: unknown, [l, r]: unknown[]) => (l as number) + (r as number),
     );
   }
   protected get mulNode(): Parser<number> {
-    return parserOf<number>(
-      new TreeExp(
-        "Mul",
-        [this.expr._exp, this.expr._exp],
-        (_node: unknown, [l, r]: unknown[]) => (l as number) * (r as number),
-      ),
+    return treeExp<number>(
+      "Mul",
+      [this.expr, this.expr],
+      (_node: unknown, [l, r]: unknown[]) => (l as number) * (r as number),
     );
   }
 }
@@ -202,26 +189,20 @@ Deno.test("TreeExp — fewer child parsers than node arity skips extra children"
   // the children you need, leave the rest unconsumed.
   class FirstChildOnly extends Grammar<{ expr: number }> {
     override start(): Parser<number> {
-      return parserOf<number>(
-        new TreeExp(
-          "Add",
-          [this.expr._exp],
-          (_node: unknown, [l]: unknown[]) => l as number,
-        ),
+      return treeExp<number>(
+        "Add",
+        [this.expr],
+        (_node: unknown, [l]: unknown[]) => l as number,
       );
     }
     @rule
     get expr(): Parser<number> {
       return or(
-        parserOf<number>(
-          new TreeExp("Num", [], (n: unknown) => (n as Num).value),
-        ),
-        parserOf<number>(
-          new TreeExp(
-            "Add",
-            [this.expr._exp, this.expr._exp],
-            (_n: unknown, [l, r]: unknown[]) => (l as number) + (r as number),
-          ),
+        treeExp<number>("Num", [], (n: unknown) => (n as Num).value),
+        treeExp<number>(
+          "Add",
+          [this.expr, this.expr],
+          (_n: unknown, [l, r]: unknown[]) => (l as number) + (r as number),
         ),
       );
     }

@@ -364,7 +364,7 @@ sub-parsers by position, completing at the post-subtree offset — mirroring
 how `TokExp` completes at the next character position.
 
 ```ts
-import { Grammar, rule, flattenTree, parserOf, TreeExp, or } from '@lapis-lang/zipper-grammar';
+import { Grammar, rule, flattenTree, treeExp, or } from '@lapis-lang/zipper-grammar';
 
 class TreeEval extends Grammar<{ expr: number }> {
     override start() { return this.expr; }
@@ -372,9 +372,8 @@ class TreeEval extends Grammar<{ expr: number }> {
         return or(this.numNode, this.addNode);
     }
     protected get addNode(): Parser<number> {
-        return parserOf(new TreeExp('Add',
-            [this.expr._exp, this.expr._exp],
-            (_n, [l, r]) => (l as number) + (r as number)));
+        return treeExp('Add', [this.expr, this.expr],
+            (_n, [l, r]) => (l as number) + (r as number));
     }
 }
 
@@ -705,6 +704,9 @@ Import from `@lapis-lang/zipper-grammar` and use without `this.`:
 | `keyword(word, reserved?)` | Literal with reserved-word guard.     |
 | `flattenTree(root, childrenOf)` | Flatten a tree into a preorder `TreeTok[]` stream for tree-consuming grammars. |
 | `TreeExp(tag, children, fn?)` | Match a tree node by class name; dispatch to child sub-parsers by position. |
+| `treeExp(tag, children, fn?)` | Convenience wrapper for `TreeExp` that accepts `Parser<T>` children (not raw `Exp`). |
+| `exactTreeExp(tag, arity, children, fn?)` | Like `treeExp` but requires exact child-count match (for decorator grammars over derivation trees). |
+| `foldTree(tree, handlers)` | Fold a `DerivationTree` bottom-up with a handler per production label — the simplest way to run a semantic pass. |
 | `parserOf(exp)`       | Wrap a raw `Exp` (e.g. `TreeExp`) as a `Parser<T>`. |
 
 ### `Grammar<S>` — abstract base
@@ -877,6 +879,71 @@ PwZ in a nutshell: **cursors walking a tree, sharing notes, handling
 ambiguity and left recursion through memoization**. The rest (semantic
 actions, `chain`, `@rule`, shape-typed grammars) is built on top of this
 core mechanism.
+
+## Retained derivation trees (multi-pass parsing)
+
+The single-pass, inline-semantics design is elegant and efficient for
+L-attributed grammars — the vast majority of real-world cases. But certain
+patterns benefit from parsing once structurally, then running multiple
+semantic passes over the result:
+
+- **Multi-pass evaluation**: type checking and evaluation can share a single
+  structural parse instead of re-parsing the input independently for each pass.
+- **Circular attribute flow**: `let rec` bindings can be resolved by re-walking
+  the retained tree under different contexts, without re-parsing.
+
+`Grammar.parseToTree(input)` is the opt-in tree-*producing* entry point.
+It captures *which `@rule` production matched where, with child relationships
+and source spans* as a first-class `DerivationTree`:
+
+```ts
+const { forest, trees } = grammar.parseToTree(input);
+// forest: the inline parse result (same as grammar.parse(input))
+// trees:  retained derivation trees (one per derivation in an ambiguous parse)
+
+const tree = trees[0]!;
+tree.root.label;   // "expr" — the @rule production name
+tree.root.span;    // { start: 0, end: 11 } — absolute source span
+tree.root.children; // sub-derivations
+```
+
+The derivation tree can be walked directly via `foldTree` (the simplest
+approach for most passes) or flattened via `derivationToTreeToks` and
+consumed by a `TreeExp`-based decorator grammar (grammar-over-grammar
+composition) when you need ambiguity handling or memoization:
+
+```ts
+import { foldTree, derivationToTreeToks, exactTreeExp, Grammar, rule, or } from '@lapis-lang/zipper-grammar';
+
+// Simplest: foldTree — a plain recursive fold, no grammar subclass needed
+const depth = foldTree(tree, {
+  s: (_node, childResults) =>
+    childResults.length === 0 ? 0 : 1 + Math.max(...childResults),
+});
+
+// Advanced: TreeExp decorator grammar (grammar-over-grammar composition)
+const toks = derivationToTreeToks(tree);
+class MyDecorator extends Grammar<{ s: number }> {
+  start() { return this.s; }
+  @rule get s() {
+    // depth(s) = 1 + depth(child)   if s has a child
+    //          = 0                   if s is a leaf
+    return or(
+      exactTreeExp("s", 1, [this.s], (_n, [c]) => (c as number) + 1),
+      exactTreeExp("s", 0, [], () => 0),
+    );
+  }
+}
+const result = new MyDecorator().parseTree(toks);
+```
+
+The inline single-pass `parse()` path is **unaffected** — `parseToTree` is
+purely additive and does not change the behaviour or performance of
+`parse()` or `recognize()`.
+
+See [examples/multipass-demo.ts](examples/multipass-demo.ts) for a working
+multi-pass example: parse once, then run multiple semantic passes over the
+shared derivation tree.
 
 ## References
 

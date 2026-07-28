@@ -81,3 +81,16 @@ export type {
 /* ── Tree-consuming grammars (higher-order attribute grammars) ── */
 export { flattenTree, TreeExp } from "./zipper.ts";
 export type { TreeTok } from "./zipper.ts";
+
+/* ── Retained derivation trees ── */
+export {
+  buildDerivationTrees,
+  DerivationNode,
+  derivationToTreeToks,
+  DerivationTree,
+  ExactArityTreeExp,
+  exactTreeExp,
+  foldTree,
+  treeExp,
+} from "./derivation.ts";
+export type { DerivationRecord, FoldHandlers } from "./derivation.ts";
