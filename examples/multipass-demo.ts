@@ -13,24 +13,27 @@
  */
 
 import {
+  char,
+  type DerivationNode,
   derivationToTreeToks,
+  epsilon,
   exactTreeExp,
   foldTree,
   Grammar,
-  rule,
   or,
+  rule,
   seq,
-  char,
-  epsilon,
-  type DerivationNode,
 } from "../src/index.ts";
 import type { Parser } from "../src/Parser.ts";
 
 /* ── A simple grammar: S → "a" S "b" | ε  (balanced a^n b^n) ─────────── */
 
 class Balanced extends Grammar<{ s: string }> {
-  start() { return this.s; }
-  @rule get s(): Parser<string> {
+  start() {
+    return this.s;
+  }
+  @rule
+  get s(): Parser<string> {
     return or(
       seq(char("a"), this.s, char("b")).map(() => "ok"),
       epsilon("ok"),
@@ -58,7 +61,9 @@ const tree = trees[0]!;
 /* ── Step 2: Inspect the derivation tree ──────────────────────────────── */
 
 function printTree(node: DerivationNode, indent: string): void {
-  console.log(`${indent}${node.label} [${node.span.start},${node.span.end}) children=${node.children.length}`);
+  console.log(
+    `${indent}${node.label} [${node.span.start},${node.span.end}) children=${node.children.length}`,
+  );
   for (const c of node.children) printTree(c, indent + "  ");
 }
 
@@ -91,7 +96,9 @@ console.log(`  decorator #2 (count):     ${count}`);
 const spans = foldTree(tree, {
   s: (node, childResults) => {
     const self = `${node.label}[${node.span.start},${node.span.end})`;
-    return childResults.length === 0 ? self : `${self}, ${childResults.join(", ")}`;
+    return childResults.length === 0
+      ? self
+      : `${self}, ${childResults.join(", ")}`;
   },
 });
 
@@ -106,8 +113,11 @@ console.log(`  decorator #3 (spans):     ${spans}`);
 // `Parser<T>` children (not raw `Exp`) and ensures exact-arity matching.
 
 class RootSpanDecorator extends Grammar<{ s: string }> {
-  start() { return this.s; }
-  @rule get s(): Parser<string> {
+  start() {
+    return this.s;
+  }
+  @rule
+  get s(): Parser<string> {
     return or(
       exactTreeExp("s", 1, [this.s], (node: unknown) => {
         const n = node as DerivationNode;
@@ -128,6 +138,8 @@ console.log(`  decorator #4 (TreeExp):   ${[...rootSpanResult][0]}`);
 /* ── Contrast: the old way re-parses for each pass ──────────────────── */
 
 console.log("\n— Contrast: old way (re-parse per pass) —");
-console.log(`  Balanced.parse:          ${[...new Balanced().parse(source)][0]}`);
+console.log(
+  `  Balanced.parse:          ${[...new Balanced().parse(source)][0]}`,
+);
 
 console.log("\n— Done —");

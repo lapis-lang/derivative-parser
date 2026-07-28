@@ -85,11 +85,11 @@ export type { TreeTok } from "./zipper.ts";
 /* ── Retained derivation trees ── */
 export {
   buildDerivationTrees,
-  derivationToTreeToks,
   DerivationNode,
+  derivationToTreeToks,
   DerivationTree,
-  exactTreeExp,
   ExactArityTreeExp,
+  exactTreeExp,
   foldTree,
   treeExp,
 } from "./derivation.ts";

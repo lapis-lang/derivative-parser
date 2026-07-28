@@ -6,13 +6,7 @@
  */
 
 import { assertEquals, assertNotEquals } from "@std/assert";
-import {
-  flattenTree,
-  Grammar,
-  or,
-  rule,
-  treeExp,
-} from "../src/index.ts";
+import { flattenTree, Grammar, or, rule, treeExp } from "../src/index.ts";
 import type { Parser } from "../src/index.ts";
 
 /* ── A tiny tree algebra for testing ─────────────────────────────────── */
@@ -59,12 +53,18 @@ abstract class AbstractTreeEval extends Grammar<EvalShape> {
     return treeExp<number>("Num", [], (node: unknown) => (node as Num).value);
   }
   protected get addNode(): Parser<number> {
-    return treeExp<number>("Add", [this.expr, this.expr],
-      (_node: unknown, [l, r]: unknown[]) => (l as number) + (r as number));
+    return treeExp<number>(
+      "Add",
+      [this.expr, this.expr],
+      (_node: unknown, [l, r]: unknown[]) => (l as number) + (r as number),
+    );
   }
   protected get mulNode(): Parser<number> {
-    return treeExp<number>("Mul", [this.expr, this.expr],
-      (_node: unknown, [l, r]: unknown[]) => (l as number) * (r as number));
+    return treeExp<number>(
+      "Mul",
+      [this.expr, this.expr],
+      (_node: unknown, [l, r]: unknown[]) => (l as number) * (r as number),
+    );
   }
 }
 
@@ -189,15 +189,21 @@ Deno.test("TreeExp — fewer child parsers than node arity skips extra children"
   // the children you need, leave the rest unconsumed.
   class FirstChildOnly extends Grammar<{ expr: number }> {
     override start(): Parser<number> {
-      return treeExp<number>("Add", [this.expr],
-        (_node: unknown, [l]: unknown[]) => l as number);
+      return treeExp<number>(
+        "Add",
+        [this.expr],
+        (_node: unknown, [l]: unknown[]) => l as number,
+      );
     }
     @rule
     get expr(): Parser<number> {
       return or(
         treeExp<number>("Num", [], (n: unknown) => (n as Num).value),
-        treeExp<number>("Add", [this.expr, this.expr],
-          (_n: unknown, [l, r]: unknown[]) => (l as number) + (r as number)),
+        treeExp<number>(
+          "Add",
+          [this.expr, this.expr],
+          (_n: unknown, [l, r]: unknown[]) => (l as number) + (r as number),
+        ),
       );
     }
   }

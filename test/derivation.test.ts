@@ -4,21 +4,19 @@
  * `Grammar.parseToTree`.
  */
 
-import {
-  assertEquals,
-} from "@std/assert";
+import { assertEquals } from "@std/assert";
 import {
   buildDerivationTrees,
-  derivationToTreeToks,
-  DerivationNode,
-  DerivationTree,
-  Grammar,
-  rule,
-  or,
-  seq,
   char,
-  epsilon,
+  DerivationNode,
   type DerivationRecord,
+  derivationToTreeToks,
+  DerivationTree,
+  epsilon,
+  Grammar,
+  or,
+  rule,
+  seq,
 } from "../src/index.ts";
 import type { Parser } from "../src/Parser.ts";
 
@@ -145,8 +143,11 @@ Deno.test("derivationToTreeToks — single node", () => {
 
 // Simple grammar: S → "a" S "b" | ε  (balanced a^n b^n)
 class Balanced extends Grammar<{ s: string }> {
-  start() { return this.s; }
-  @rule get s(): Parser<string> {
+  start() {
+    return this.s;
+  }
+  @rule
+  get s(): Parser<string> {
     return or(
       seq(char("a"), this.s, char("b")).map(() => "ok"),
       epsilon("ok"),

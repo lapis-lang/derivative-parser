@@ -529,7 +529,13 @@ export class ZipperDriver {
    * (e.g. passthrough productions `expr → term → factor`).
    */
   derivationSink:
-    | ((record: { readonly label: string; readonly span: Span; readonly value?: unknown }) => void)
+    | ((
+      record: {
+        readonly label: string;
+        readonly span: Span;
+        readonly value?: unknown;
+      },
+    ) => void)
     | undefined = undefined;
   /** Maps each Pos sentinel to its 0-based character offset in the source. */
   readonly posToOffset: Map<Pos, number> = new Map<Pos, number>();
@@ -624,7 +630,10 @@ export class ZipperDriver {
     // path, so this is a no-op branch. A sequence number is assigned to
     // each record to preserve completion order for hierarchy reconstruction.
     const sink = this.derivationSink;
-    if (sink !== undefined && mem.exp !== undefined && mem.exp.productionLabel !== undefined) {
+    if (
+      sink !== undefined && mem.exp !== undefined &&
+      mem.exp.productionLabel !== undefined
+    ) {
       const start = this.posToOffset.get(mem.startPos) ?? 0;
       const end = this.posToOffset.get(this.pos) ?? start;
       sink({ label: mem.exp.productionLabel, span: { start, end }, value });
@@ -684,9 +693,22 @@ export class ZipperDriver {
   parseWithDerivation<T>(
     start: Exp,
     tokens: Iterable<Tok>,
-  ): { readonly forest: Set<T>; readonly records: readonly { readonly label: string; readonly span: Span; readonly value?: unknown; readonly seq: number }[] } {
+  ): {
+    readonly forest: Set<T>;
+    readonly records: readonly {
+      readonly label: string;
+      readonly span: Span;
+      readonly value?: unknown;
+      readonly seq: number;
+    }[];
+  } {
     let seq = 0;
-    const records: { label: string; span: Span; value?: unknown; seq: number }[] = [];
+    const records: {
+      label: string;
+      span: Span;
+      value?: unknown;
+      seq: number;
+    }[] = [];
     this.derivationSink = (r) => records.push({ ...r, seq: seq++ });
     this._init(start);
     this._runSteps(tokens);

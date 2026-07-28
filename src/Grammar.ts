@@ -6,10 +6,7 @@ import {
   type TreeTok,
   ZipperDriver,
 } from "./zipper.ts";
-import {
-  buildDerivationTrees,
-  type DerivationTree,
-} from "./derivation.ts";
+import { buildDerivationTrees, type DerivationTree } from "./derivation.ts";
 import { treeKey } from "./util/tree_key.ts";
 import {
   _markProduction,
@@ -254,7 +251,12 @@ export abstract class Grammar<S extends GrammarShape = GrammarShape> {
    * For ambiguous grammars, multiple derivation trees may be produced (one
    * per top-level derivation); the caller selects which to use.
    */
-  parseToTree(input: string): { readonly forest: Set<S[keyof S]>; readonly trees: readonly DerivationTree[] } {
+  parseToTree(
+    input: string,
+  ): {
+    readonly forest: Set<S[keyof S]>;
+    readonly trees: readonly DerivationTree[];
+  } {
     assertInvariants(this);
     const driver = new ZipperDriver();
     const { forest, records } = driver.parseWithDerivation<S[keyof S]>(

@@ -14,8 +14,8 @@
  */
 
 import type { Exp, Span, TreeTok, ZipperDriver } from "./zipper.ts";
-import { TreeExp, type Mem } from "./zipper.ts";
-import { parserOf, type Parser } from "./Parser.ts";
+import { type Mem, TreeExp } from "./zipper.ts";
+import { type Parser, parserOf } from "./Parser.ts";
 
 /**
  * A single node in a retained derivation tree.
@@ -127,7 +127,8 @@ export function buildDerivationTrees(
       // Is top contained in this record (or same span with lower seq)?
       if (
         (topSpan.start >= mySpan.start && topSpan.end <= mySpan.end) &&
-        (topSpan.start > mySpan.start || topSpan.end < mySpan.end || top.seq < record.seq)
+        (topSpan.start > mySpan.start || topSpan.end < mySpan.end ||
+          top.seq < record.seq)
       ) {
         children.push(stack.pop()!);
         continue;
@@ -137,7 +138,13 @@ export function buildDerivationTrees(
 
     // Reverse children to restore source order (stack pops in reverse).
     children.reverse();
-    const node = new DerivationNode(record.label, record.span, children, record.value, record.seq);
+    const node = new DerivationNode(
+      record.label,
+      record.span,
+      children,
+      record.value,
+      record.seq,
+    );
 
     // This node stays on the stack — it may be popped by a later parent
     // or become a root at the end.
@@ -246,7 +253,8 @@ export class ExactArityTreeExp extends TreeExp {
 export function treeExp<T>(
   tag: string,
   children: readonly Parser<unknown>[],
-  fn: (node: unknown, childVals: unknown[]) => T = (_n, vs) => vs as unknown as T,
+  fn: (node: unknown, childVals: unknown[]) => T = (_n, vs) =>
+    vs as unknown as T,
 ): Parser<T> {
   return parserOf(
     new TreeExp(
@@ -271,7 +279,8 @@ export function exactTreeExp<T>(
   tag: string,
   expectedArity: number,
   children: readonly Parser<unknown>[],
-  fn: (node: unknown, childVals: unknown[]) => T = (_n, vs) => vs as unknown as T,
+  fn: (node: unknown, childVals: unknown[]) => T = (_n, vs) =>
+    vs as unknown as T,
 ): Parser<T> {
   return parserOf(
     new ExactArityTreeExp(
@@ -324,7 +333,9 @@ export function foldTree<T>(
     if (!handler) {
       throw new Error(
         `foldTree: no handler for label "${node.label}" and no wildcard "_" provided. ` +
-          `Available handlers: ${[...Object.keys(handlers)].filter((k) => k !== "_").join(", ")}`,
+          `Available handlers: ${
+            [...Object.keys(handlers)].filter((k) => k !== "_").join(", ")
+          }`,
       );
     }
     return handler(node, childResults);
