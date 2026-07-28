@@ -35,6 +35,8 @@ const T_EOF: Tok = { tag: "\u0000<EOF>", sym: "<EOF>", offset: -1 };
 export class Mem {
   endPos: Pos = P_BOTTOM;
   values: unknown[] = [];
+  /** The `Exp` that owns this memo (set in `goDown`). Used by the derivation sink to look up the production label. */
+  exp: Exp | undefined = undefined;
   constructor(readonly startPos: Pos, readonly parents: Cxt[]) {}
 }
 
@@ -44,6 +46,15 @@ export class Mem {
 export abstract class Exp {
   /** Mutable memo: lazily updated as derivation reaches this node at new positions. */
   m: Mem | undefined = undefined;
+
+  /**
+   * Optional production label — the `@rule` production name (from `ctx.name`
+   * in the `@rule` decorator). Set by `Grammar._ruleSlot`/`_paramRuleSlot`
+   * when wrapping a production body in a `DelayedExp`. Only `@rule`
+   * productions carry a label; combinators (`AltExp`/`SeqExp`/etc.) leave it
+   * `undefined`. Used by the derivation sink to label `DerivationNode`s.
+   */
+  productionLabel: string | undefined = undefined;
 
   /**
    * Descend into this Exp under context `parent`. Threads `parent` into
@@ -68,10 +79,12 @@ export abstract class Exp {
     } else if (m0 && !driver.posToOffset.has(m0.startPos)) {
       // Stale memo from a prior pass — discard and re-derive.
       const m = new Mem(driver.pos, [parent]);
+      m.exp = this;
       this.m = m;
       this.descend(driver, m);
     } else {
       const m = new Mem(driver.pos, [parent]);
+      m.exp = this;
       this.m = m;
       this.descend(driver, m);
     }
@@ -500,6 +513,24 @@ export class ZipperDriver {
   currentToken: Tok = T_EOF;
   /** When true, only track whether a value was produced (not all values). */
   recognizeOnly = false;
+  /**
+   * Optional derivation sink: when set, `completeAt` records a
+   * `{ label, span, value }` record for each `@rule` production completion
+   * (those whose owning `Exp` has a `productionLabel`). `undefined` by
+   * default → the common `parse()` path pays zero capture overhead (a single
+   * branch on `undefined`). Set by `Grammar.parseToTree` (via
+   * `parseWithDerivation`) to materialise the derivation.
+   *
+   * A `seq` number (completion order) is assigned by `parseWithDerivation`
+   * when collecting records. Since the engine completes children before
+   * parents (bottom-up), a parent's `seq` is always greater than its
+   * children's. This lets `buildDerivationTrees` reconstruct the true
+   * hierarchy even when multiple productions complete at the same span
+   * (e.g. passthrough productions `expr → term → factor`).
+   */
+  derivationSink:
+    | ((record: { readonly label: string; readonly span: Span; readonly value?: unknown }) => void)
+    | undefined = undefined;
   /** Maps each Pos sentinel to its 0-based character offset in the source. */
   readonly posToOffset: Map<Pos, number> = new Map<Pos, number>();
   /** Reverse lookup: offset → Pos. Maintained alongside {@link posToOffset} for O(1) {@link stepReplay}. */
@@ -586,6 +617,18 @@ export class ZipperDriver {
     if (this.recognizeOnly && mem.endPos === this.pos) return; // already completed
     mem.endPos = this.pos;
     mem.values.push(value);
+    // Derivation capture: record a DerivationRecord for @rule productions.
+    // Only Exp nodes with a `productionLabel` (set by @rule via
+    // _ruleSlot/_paramRuleSlot) are recorded; combinators contribute
+    // spans/children only. The sink is undefined on the default parse()
+    // path, so this is a no-op branch. A sequence number is assigned to
+    // each record to preserve completion order for hierarchy reconstruction.
+    const sink = this.derivationSink;
+    if (sink !== undefined && mem.exp !== undefined && mem.exp.productionLabel !== undefined) {
+      const start = this.posToOffset.get(mem.startPos) ?? 0;
+      const end = this.posToOffset.get(this.pos) ?? start;
+      sink({ label: mem.exp.productionLabel, span: { start, end }, value });
+    }
     for (const c of mem.parents) c.goUp(this, value);
   }
 
@@ -626,6 +669,29 @@ export class ZipperDriver {
     this._init(start);
     this._runSteps(tokens);
     return new Set(this.topValues as T[]);
+  }
+
+  /**
+   * Parse `tokens` while capturing the derivation as a list of
+   * {@link DerivationRecord}s (one per `@rule` production completion).
+   * Returns the parse forest and the captured records.
+   *
+   * The sink is set before parsing and cleared after, so the default
+   * `parse()`/`recognize()` paths are unaffected. Only `@rule` productions
+   * (whose `Exp.productionLabel` is set) are recorded; combinators contribute
+   * spans/children only.
+   */
+  parseWithDerivation<T>(
+    start: Exp,
+    tokens: Iterable<Tok>,
+  ): { readonly forest: Set<T>; readonly records: readonly { readonly label: string; readonly span: Span; readonly value?: unknown; readonly seq: number }[] } {
+    let seq = 0;
+    const records: { label: string; span: Span; value?: unknown; seq: number }[] = [];
+    this.derivationSink = (r) => records.push({ ...r, seq: seq++ });
+    this._init(start);
+    this._runSteps(tokens);
+    this.derivationSink = undefined;
+    return { forest: new Set(this.topValues as T[]), records };
   }
 
   /**
