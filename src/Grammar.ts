@@ -1,11 +1,5 @@
 import { type Checkpoint, Parser } from "./Parser.ts";
-import {
-  DelayedExp,
-  type Span,
-  type Tok,
-  type TreeTok,
-  ZipperDriver,
-} from "./zipper.ts";
+import { DelayedExp, type Span, type Tok, ZipperDriver } from "./zipper.ts";
 import { buildDerivationTrees, type DerivationTree } from "./derivation.ts";
 import { treeKey } from "./util/tree_key.ts";
 import {
@@ -204,37 +198,6 @@ export abstract class Grammar<S extends GrammarShape = GrammarShape> {
       this.start()._exp,
       this._toTokens(input),
     );
-  }
-
-  /**
-   * Parse a tree-token stream (a flattened tree) against the grammar rooted at
-   * {@link start}. This is the entry point for **tree-consuming grammars** —
-   * a grammar pass whose input is an already-built tree (e.g. an AST or a
-   * derivation tree) rather than source text. Combined with overridden
-   * semantic actions in a subclass, this lets a second pass (such as
-   * evaluation) be expressed as a grammar subclass instead of a separate
-   * recursive function.
-   *
-   * `treeTokens` is a preorder flattening of the tree; use {@link flattenTree}
-   * with a `childrenOf` extractor to build it. Per-pass memo isolation is
-   * handled by the driver, so the same grammar instance may be used across
-   * multiple `parse`/`parseTree` calls without stale-state leakage.
-   */
-  parseTree(treeTokens: readonly TreeTok[]): Set<S[keyof S]> {
-    assertInvariants(this);
-    return new ZipperDriver().parseTree<S[keyof S]>(
-      this.start()._exp,
-      treeTokens,
-    );
-  }
-
-  /** Drive the zipper engine over a tree-token stream with an arbitrary start parser. */
-  protected _parseTreeWith<T>(
-    treeTokens: readonly TreeTok[],
-    start: Parser<T>,
-  ): Set<T> {
-    assertInvariants(this);
-    return new ZipperDriver().parseTree<T>(start._exp, treeTokens);
   }
 
   /**
