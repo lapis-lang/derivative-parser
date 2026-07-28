@@ -1,11 +1,11 @@
 /**
  * Multi-pass parsing demo — parse once structurally, then run multiple
- * semantic passes over the retained derivation tree.
+ * semantic passes over the retained derivation tree using `SemanticPass`.
  *
  * Contrast with `arith-demo.ts`, which instantiates separate grammar
  * subclasses (`MathEval`, `MathAST`) that each re-parse the input
  * independently. Here, we parse once via `parseToTree`, then walk the
- * retained derivation tree with multiple semantic passes.
+ * retained derivation tree with multiple `SemanticPass` subclasses.
  *
  * The retained derivation tree (`DerivationNode`) captures which `@rule`
  * production matched where, with child relationships and source spans.
@@ -15,13 +15,11 @@
 import {
   char,
   type DerivationNode,
-  derivationToTreeToks,
   epsilon,
-  exactTreeExp,
-  foldTree,
   Grammar,
   or,
   rule,
+  SemanticPass,
   seq,
 } from "../src/index.ts";
 import type { Parser } from "../src/Parser.ts";
@@ -70,70 +68,57 @@ function printTree(node: DerivationNode, indent: string): void {
 console.log("\n  derivation tree:");
 printTree(tree.root, "    ");
 
-/* ── Step 3: Decorator #1 — depth (foldTree) ─────────────────────────── */
+/* ── Step 3: Pass #1 — depth (SemanticPass) ──────────────────────────── */
 //
-// `foldTree` is the simplest way to run a semantic pass over a derivation
-// tree — no grammar subclass, no TreeExp, no engine. Each handler receives
-// the node and the already-folded child results.
+// `SemanticPass` is the OOP-native way to run a semantic pass: subclass and
+// override a method named after each production label. The method receives
+// the `DerivationNode` and the already-computed child results.
 
-const depth = foldTree<number>(tree, {
-  s: (_node, childResults) =>
-    childResults.length === 0 ? 0 : 1 + Math.max(...childResults),
-});
-
-console.log(`\n  decorator #1 (depth):     ${depth}`);
-
-/* ── Step 4: Decorator #2 — count nodes (foldTree) ──────────────────── */
-
-const count = foldTree<number>(tree, {
-  s: (_node, childResults) => 1 + childResults.reduce((sum, c) => sum + c, 0),
-});
-
-console.log(`  decorator #2 (count):     ${count}`);
-
-/* ── Step 5: Decorator #3 — extract source spans (foldTree) ─────────── */
-
-const spans = foldTree(tree, {
-  s: (node, childResults) => {
-    const self = `${node.label}[${node.span.start},${node.span.end})`;
-    return childResults.length === 0
-      ? self
-      : `${self}, ${childResults.join(", ")}`;
-  },
-});
-
-console.log(`  decorator #3 (spans):     ${spans}`);
-
-/* ── Step 6: Decorator #4 — TreeExp grammar over the derivation tree ── */
-//
-// For passes that need grammar-level features (ambiguity handling,
-// memoization, composition with other grammar passes), a `TreeExp`-based
-// decorator grammar can consume the derivation tree via
-// `derivationToTreeToks` + `parseTree`. The `exactTreeExp` helper accepts
-// `Parser<T>` children (not raw `Exp`) and ensures exact-arity matching.
-
-class RootSpanDecorator extends Grammar<{ s: string }> {
-  start() {
-    return this.s;
-  }
-  @rule
-  get s(): Parser<string> {
-    return or(
-      exactTreeExp("s", 1, [this.s], (node: unknown) => {
-        const n = node as DerivationNode;
-        return `[${n.span.start},${n.span.end})`;
-      }),
-      exactTreeExp("s", 0, [], (node: unknown) => {
-        const n = node as DerivationNode;
-        return `[${n.span.start},${n.span.end})`;
-      }),
-    );
+class DepthPass extends SemanticPass<{ s: number }> {
+  s(_node: DerivationNode, children: number[]): number {
+    return children.length === 0 ? 0 : 1 + Math.max(...children);
   }
 }
 
-const toks = derivationToTreeToks(tree);
-const rootSpanResult = new RootSpanDecorator().parseTree(toks);
-console.log(`  decorator #4 (TreeExp):   ${[...rootSpanResult][0]}`);
+const depth = new DepthPass().evaluate(tree);
+console.log(`\n  pass #1 (depth):     ${depth}`);
+
+/* ── Step 4: Pass #2 — count nodes (SemanticPass) ────────────────────── */
+
+class CountPass extends SemanticPass<{ s: number }> {
+  s(_node: DerivationNode, children: number[]): number {
+    return 1 + children.reduce((sum, c) => sum + c, 0);
+  }
+}
+
+const count = new CountPass().evaluate(tree);
+console.log(`  pass #2 (count):     ${count}`);
+
+/* ── Step 5: Pass #3 — extract source spans (SemanticPass) ──────────── */
+
+class SpanPass extends SemanticPass<{ s: string }> {
+  s(node: DerivationNode, children: string[]): string {
+    const self = `${node.label}[${node.span.start},${node.span.end})`;
+    return children.length === 0 ? self : `${self}, ${children.join(", ")}`;
+  }
+}
+
+const spans = new SpanPass().evaluate(tree);
+console.log(`  pass #3 (spans):     ${spans}`);
+
+/* ── Step 6: Pass #4 — inheritance composition (Decorator pattern) ─── */
+//
+// A subclass can override one method and inherit the rest from a base pass.
+// This is the Decorator pattern: `DoubleDepthPass` decorates `DepthPass`.
+
+class DoubleDepthPass extends DepthPass {
+  override s(node: DerivationNode, children: number[]): number {
+    return super.s(node, children) * 2;
+  }
+}
+
+const doubleDepth = new DoubleDepthPass().evaluate(tree);
+console.log(`  pass #4 (2×depth):   ${doubleDepth}`);
 
 /* ── Contrast: the old way re-parses for each pass ──────────────────── */
 

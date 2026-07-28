@@ -78,19 +78,11 @@ export type {
   RescueHandler,
 } from "./contracts.ts";
 
-/* ── Tree-consuming grammars (higher-order attribute grammars) ── */
-export { flattenTree, TreeExp } from "./zipper.ts";
-export type { TreeTok } from "./zipper.ts";
-
-/* ── Retained derivation trees ── */
+/* ── Retained derivation trees + semantic passes ── */
 export {
   buildDerivationTrees,
   DerivationNode,
-  derivationToTreeToks,
   DerivationTree,
-  ExactArityTreeExp,
-  exactTreeExp,
-  foldTree,
-  treeExp,
+  SemanticPass,
 } from "./derivation.ts";
-export type { DerivationRecord, FoldHandlers } from "./derivation.ts";
+export type { DerivationRecord } from "./derivation.ts";

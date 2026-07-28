@@ -5,7 +5,7 @@
  * Class instances and other non-plain objects are keyed **by identity** via
  * a `WeakMap` — `JSON.stringify` silently drops `Map`/`Set`/private fields,
  * so content keying would collide distinct instances with different hidden
- * state (issue #16). `undefined`/`symbol`/`function` fall back to a
+ * state. `undefined`/`symbol`/`function` fall back to a
  * monotonic `<unkeyable@n>` sentinel. Keys are process-local, never persisted.
  */
 

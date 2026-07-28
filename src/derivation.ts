@@ -1,21 +1,23 @@
 /**
  * Retained derivation tree — the tree-*producing* half of the
- * structural/semantic separation (issue #23).
+ * structural/semantic separation, and the {@link SemanticPass}
+ * base class — the tree-*consuming* half.
  *
  * A {@link DerivationTree} materialises *which `Exp` (production) matched
  * where, with child relationships and source spans* as a first-class tree.
  * It is produced opt-in via {@link Grammar.parseToTree}; the inline
  * single-pass L-attributed model remains the default (zero overhead).
  *
- * The tree is shaped to feed the existing tree-consuming half
- * ({@link TreeExp} / {@link flattenTree} / `Grammar.parseTree`) via
- * {@link derivationToTreeToks}, so decorators are grammars
- * (grammar-over-grammar composition).
+ * A {@link SemanticPass} walks a `DerivationTree` bottom-up, dispatching
+ * each node to an overridable method named after the production label.
+ * This is the OOP-native way to run a semantic pass: subclass and override,
+ * mirroring the grammar's shape — with contracts, shape-typing, and
+ * inheritance composition.
  */
 
-import type { Exp, Span, TreeTok, ZipperDriver } from "./zipper.ts";
-import { type Mem, TreeExp } from "./zipper.ts";
-import { type Parser, parserOf } from "./Parser.ts";
+import type { Span } from "./zipper.ts";
+import { wrapWithContracts } from "./contracts.ts";
+import type { GrammarShape } from "./Grammar.ts";
 
 /**
  * A single node in a retained derivation tree.
@@ -68,6 +70,9 @@ export class DerivationTree {
  * The `seq` field is the completion order (0-based), assigned as records
  * are captured. Since the engine completes children before parents
  * (bottom-up), a parent's `seq` is always greater than its children's.
+ *
+ * @internal Exported only because `ZipperDriver.parseWithDerivation`
+ * returns it; not part of the public API.
  */
 export interface DerivationRecord {
   readonly label: string;
@@ -161,184 +166,106 @@ export function buildDerivationTrees(
   return roots.map((root) => new DerivationTree(root, source));
 }
 
-/* ── Adapter: derivation tree → tree-token stream ────────────────────── */
+/* ── SemanticPass — OOP-native tree consumer ────────────────────────── */
 
 /**
- * Flatten a {@link DerivationTree} into a stream of {@link TreeTok}s in
- * preorder, so it can be consumed by the existing tree-consuming half
- * (`Grammar.parseTree` + `TreeExp`-based decorator grammars).
+ * Abstract base class for semantic passes over {@link DerivationTree}s.
  *
- * Each `DerivationNode` becomes a `TreeTok` with:
- * - `tag` = the node's `label` (the `@rule` production name)
- * - `node` = the `DerivationNode` itself (available to `TreeExp` `fn` callbacks)
- * - `arity` = the number of children
- * - `subtreeSize` = 1 + all descendants
- * - `offset` = 0-based preorder position
+ * A semantic pass mirrors the grammar's production names as overridable
+ * methods. {@link evaluate} walks the tree bottom-up, dispatching each
+ * {@link DerivationNode} to the method named after the node's `label`
+ * (the `@rule` production name). The method receives the node and the
+ * already-computed results of its children (in source order).
  *
- * This mirrors {@link flattenTree} but operates on `DerivationNode`s
- * instead of arbitrary tree objects, using `label` as the tag (rather than
- * `constructor.name`).
- */
-export function derivationToTreeToks(tree: DerivationTree): TreeTok[] {
-  const out: TreeTok[] = [];
-  let offset = 0;
-  const visit = (node: DerivationNode): number => {
-    const myOffset = offset++;
-    let size = 1;
-    for (const child of node.children) size += visit(child);
-    out.push({
-      tag: node.label,
-      node,
-      arity: node.children.length,
-      subtreeSize: size,
-      offset: myOffset,
-    });
-    return size;
-  };
-  visit(tree.root);
-  // Tokens are pushed post-recurse (after children), so the array is in
-  // postorder despite offsets being assigned preorder. Re-sort by offset
-  // to restore preorder for positional matching by TreeExp.
-  out.sort((a, b) => a.offset - b.offset);
-  return out;
-}
-
-/* ── Exact-arity TreeExp for decorator grammars ──────────────────────── */
-
-/**
- * A `TreeExp` variant that requires the tree token's arity to *exactly*
- * match `expectedArity` (not just be >= children.length as `TreeExp`
- * normally allows). Useful for decorator grammars over derivation trees
- * where a production with arity N must only match tree tokens with exactly
- * N children — e.g. `s` with arity 0 only matches leaf nodes, not any
- * `s` node.
- */
-export class ExactArityTreeExp extends TreeExp {
-  constructor(
-    tag: string,
-    private readonly expectedArity: number,
-    children: readonly Exp[],
-    fn: (node: unknown, childVals: unknown[]) => unknown,
-  ) {
-    super(tag, children, fn);
-  }
-  /** Match the current tree token by class name and exact arity, then dispatch to child sub-parsers. */
-  override descend(driver: ZipperDriver, m: Mem): void {
-    const tok = driver.currentTreeToken;
-    if (tok === undefined || tok.tag !== this.tag) return;
-    // Exact arity check: only match if the token has exactly expectedArity
-    // children (not "at least" as TreeExp normally allows).
-    if (tok.arity !== this.expectedArity) {
-      return;
-    }
-    // Delegate to the normal TreeExp descent for child matching.
-    super.descend(driver, m);
-  }
-}
-
-/* ── Convenience helpers ────────────────────────────────────────────── */
-
-/**
- * Build a `TreeExp`-based parser from `Parser<T>` children (not raw `Exp`),
- * eliminating the `parserOf(new TreeExp(..., [this.s._exp, ...]))` boilerplate.
+ * This is the OOP-native equivalent of a fold (catamorphism): instead of a
+ * handler map, you subclass and override — the same subclass-and-override
+ * pattern used by Bracha's executable grammars and the library's own
+ * `Grammar` base. This enables:
  *
- * Each child slot accepts a `Parser<T>` instead of a raw `Exp`, so you write
- * `treeExp("Add", [this.expr, this.expr], fn)` instead of
- * `parserOf(new TreeExp("Add", [this.expr._exp, this.expr._exp], fn))`.
- *
- * @param tag  The tree-node label to match.
- * @param children  Child sub-parsers (as `Parser<T>`, not raw `Exp`).
- * @param fn  Semantic function combining the matched node and child values.
- */
-export function treeExp<T>(
-  tag: string,
-  children: readonly Parser<unknown>[],
-  fn: (node: unknown, childVals: unknown[]) => T = (_n, vs) =>
-    vs as unknown as T,
-): Parser<T> {
-  return parserOf(
-    new TreeExp(
-      tag,
-      children.map((c) => c._exp),
-      fn as (node: unknown, childVals: unknown[]) => unknown,
-    ),
-  );
-}
-
-/**
- * Build an `ExactArityTreeExp`-based parser from `Parser<T>` children,
- * combining the exact-arity check of `ExactArityTreeExp` with the
- * `Parser`-accepting convenience of {@link treeExp}.
- *
- * @param tag  The tree-node label to match.
- * @param expectedArity  The exact number of children the node must have.
- * @param children  Child sub-parsers (as `Parser<T>`, not raw `Exp`).
- * @param fn  Semantic function combining the matched node and child values.
- */
-export function exactTreeExp<T>(
-  tag: string,
-  expectedArity: number,
-  children: readonly Parser<unknown>[],
-  fn: (node: unknown, childVals: unknown[]) => T = (_n, vs) =>
-    vs as unknown as T,
-): Parser<T> {
-  return parserOf(
-    new ExactArityTreeExp(
-      tag,
-      expectedArity,
-      children.map((c) => c._exp),
-      fn as (node: unknown, childVals: unknown[]) => unknown,
-    ),
-  );
-}
-
-/**
- * A handler map for {@link foldTree}: maps each production label to a
- * function that receives the matched {@link DerivationNode} and the
- * already-folded child results, and returns the fold result for that node.
- *
- * A wildcard handler (`_`) catches any label without an explicit handler.
- */
-export type FoldHandlers<T> = {
-  [label: string]: (node: DerivationNode, childResults: readonly T[]) => T;
-} & {
-  readonly _?: (node: DerivationNode, childResults: readonly T[]) => T;
-};
-
-/**
- * Fold a {@link DerivationTree} bottom-up, applying a handler function per
- * production label. This is the simplest way to run a semantic pass over a
- * retained derivation tree — no grammar subclass, no `TreeExp`, no engine.
- *
- * Each handler receives the `DerivationNode` and the already-folded results
- * of its children (in source order). A wildcard handler (`_`) catches any
- * label without an explicit handler; if no wildcard is provided and a label
- * is missing, an error is thrown.
+ * - **Code Contracts**: `@ensures` / `@requires` / `@invariant` / `@rescue`
+ *   on semantic methods (via the same `wrapWithContracts` Proxy as `Grammar`).
+ * - **Shape-typing**: `SemanticPass<{ s: number }>` ties the pass to the
+ *   grammar's shape, just like `Grammar<S>`.
+ * - **Inheritance composition**: a subclass can override one method and
+ *   inherit defaults from a base pass — the Decorator pattern.
+ * - **Stateful passes**: `this` gives natural access to shared state
+ *   (symbol tables, environments) across productions — the L-attributed /
+ *   inherited-attribute case.
  *
  * @example
  * ```ts
- * const depth = foldTree(tree, {
- *   s: (node, childResults) =>
- *     childResults.length === 0 ? 0 : 1 + Math.max(...childResults),
- * });
+ * class DepthPass extends SemanticPass<{ s: number }> {
+ *   s(node: DerivationNode, children: number[]): number {
+ *     return children.length ? 1 + Math.max(...children) : 0;
+ *   }
+ * }
+ * const depth = new DepthPass().evaluate(tree);
  * ```
+ *
+ * @typeParam S  The shape interface mapping production names to result types.
+ *               Mirrors the `Grammar<S>` shape parameter.
  */
-export function foldTree<T>(
-  tree: DerivationTree,
-  handlers: FoldHandlers<T>,
-): T {
-  const visit = (node: DerivationNode): T => {
-    const childResults = node.children.map(visit);
-    const handler = handlers[node.label] ?? handlers._;
-    if (!handler) {
-      throw new Error(
-        `foldTree: no handler for label "${node.label}" and no wildcard "_" provided. ` +
-          `Available handlers: ${
-            [...Object.keys(handlers)].filter((k) => k !== "_").join(", ")
-          }`,
+export abstract class SemanticPass<S extends GrammarShape = GrammarShape> {
+  /**
+   * When contract checking is enabled, returns a `Proxy` enforcing
+   * `@requires`/`@ensures`/`@invariant` on semantic methods. When disabled,
+   * no Proxy is created (zero overhead). Same mechanism as `Grammar`.
+   */
+  constructor() {
+    return wrapWithContracts(this) as unknown as SemanticPass<S>;
+  }
+
+  /**
+   * Walk a {@link DerivationTree} bottom-up, dispatching each node to the
+   * method named after its `label`. Returns the result of the root node's
+   * method.
+   *
+   * If a production label has no corresponding method, a default handler is
+   * used: if the node has exactly one child, the child's result is returned
+   * (passthrough); otherwise an error is thrown. Override {@link defaultHandler}
+   * to customise this behaviour.
+   *
+   * @param tree  The derivation tree to evaluate.
+   * @returns     The result of evaluating the root node's semantic method.
+   */
+  evaluate(tree: DerivationTree): S[keyof S] {
+    return this._visit(tree.root) as S[keyof S];
+  }
+
+  /**
+   * Default handler for production labels that have no corresponding method.
+   * The default behaviour is passthrough: if the node has exactly one child,
+   * return the child's result; otherwise throw. Override to customise.
+   *
+   * @param node  The unmatched {@link DerivationNode}.
+   * @param childResults  Already-computed results of the node's children.
+   * @returns     The result for this node.
+   */
+  protected defaultHandler(
+    _node: DerivationNode,
+    childResults: readonly unknown[],
+  ): unknown {
+    if (childResults.length === 1) return childResults[0];
+    throw new Error(
+      `SemanticPass: no method for label "${_node.label}" (arity ${childResults.length}) and no default handler override. ` +
+        `Override a method named "${_node.label}" or override defaultHandler().`,
+    );
+  }
+
+  /**
+   * Internal recursive visitor. Visits children first (bottom-up), then
+   * dispatches the node to its method or the default handler.
+   */
+  private _visit(node: DerivationNode): unknown {
+    const childResults = node.children.map((c) => this._visit(c));
+    const fn = (this as Record<string, unknown>)[node.label];
+    if (typeof fn === "function") {
+      return (fn as (...args: unknown[]) => unknown).call(
+        this,
+        node,
+        childResults,
       );
     }
-    return handler(node, childResults);
-  };
-  return visit(tree.root);
+    return this.defaultHandler(node, childResults);
+  }
 }

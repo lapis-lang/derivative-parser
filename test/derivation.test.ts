@@ -1,7 +1,7 @@
 /**
  * Tests for retained derivation trees: `DerivationNode`,
- * `DerivationTree`, `buildDerivationTrees`, `derivationToTreeToks`,
- * `Grammar.parseToTree`.
+ * `DerivationTree`, `buildDerivationTrees`, `Grammar.parseToTree`,
+ * and `SemanticPass`.
  */
 
 import { assertEquals } from "@std/assert";
@@ -10,12 +10,13 @@ import {
   char,
   DerivationNode,
   type DerivationRecord,
-  derivationToTreeToks,
   DerivationTree,
+  ensures,
   epsilon,
   Grammar,
   or,
   rule,
+  SemanticPass,
   seq,
 } from "../src/index.ts";
 import type { Parser } from "../src/Parser.ts";
@@ -104,41 +105,6 @@ Deno.test("buildDerivationTrees — zero-length spans are filtered", () => {
   assertEquals(trees[0]!.root.children.length, 0);
 });
 
-/* ── derivationToTreeToks ────────────────────────────────────────────── */
-
-Deno.test("derivationToTreeToks — flattens a simple tree", () => {
-  const leaf = new DerivationNode("s", { start: 2, end: 4 }, []);
-  const mid = new DerivationNode("s", { start: 1, end: 5 }, [leaf]);
-  const root = new DerivationNode("s", { start: 0, end: 6 }, [mid]);
-  const tree = new DerivationTree(root, "aaabbb");
-
-  const toks = derivationToTreeToks(tree);
-  assertEquals(toks.length, 3);
-  // Preorder: root, mid, leaf
-  assertEquals(toks[0]!.tag, "s");
-  assertEquals(toks[0]!.offset, 0);
-  assertEquals(toks[0]!.arity, 1);
-  assertEquals(toks[0]!.subtreeSize, 3);
-  assertEquals(toks[1]!.tag, "s");
-  assertEquals(toks[1]!.offset, 1);
-  assertEquals(toks[1]!.arity, 1);
-  assertEquals(toks[1]!.subtreeSize, 2);
-  assertEquals(toks[2]!.tag, "s");
-  assertEquals(toks[2]!.offset, 2);
-  assertEquals(toks[2]!.arity, 0);
-  assertEquals(toks[2]!.subtreeSize, 1);
-});
-
-Deno.test("derivationToTreeToks — single node", () => {
-  const root = new DerivationNode("s", { start: 0, end: 6 }, []);
-  const tree = new DerivationTree(root, "aaabbb");
-  const toks = derivationToTreeToks(tree);
-  assertEquals(toks.length, 1);
-  assertEquals(toks[0]!.tag, "s");
-  assertEquals(toks[0]!.arity, 0);
-  assertEquals(toks[0]!.subtreeSize, 1);
-});
-
 /* ── Grammar.parseToTree ────────────────────────────────────────────── */
 
 // Simple grammar: S → "a" S "b" | ε  (balanced a^n b^n)
@@ -222,4 +188,210 @@ Deno.test("parseToTree — inline parse() is unaffected (zero overhead)", () => 
   // parse() should work exactly as before
   const result = g.parse("aaabbb");
   assertEquals([...result][0], "ok");
+});
+
+/* ── SemanticPass ───────────────────────────────────────────────────── */
+
+// Reuse the Balanced grammar from the parseToTree tests above.
+
+/** Depth pass: leaf = 0, internal = 1 + max(children). */
+class DepthPass extends SemanticPass<{ s: number }> {
+  s(_node: DerivationNode, children: number[]): number {
+    return children.length === 0 ? 0 : 1 + Math.max(...children);
+  }
+}
+
+/** Count pass: count all nodes. */
+class CountPass extends SemanticPass<{ s: number }> {
+  s(_node: DerivationNode, children: number[]): number {
+    return 1 + children.reduce((sum, c) => sum + c, 0);
+  }
+}
+
+/** Span extraction pass: returns a string of all spans. */
+class SpanPass extends SemanticPass<{ s: string }> {
+  s(node: DerivationNode, children: string[]): string {
+    const self = `${node.label}[${node.span.start},${node.span.end})`;
+    return children.length === 0 ? self : `${self}, ${children.join(", ")}`;
+  }
+}
+
+Deno.test("SemanticPass — depth of balanced a^n b^n tree", () => {
+  const g = new Balanced();
+  const { trees } = g.parseToTree("aaabbb");
+  const tree = trees[0]!;
+  const depth = new DepthPass().evaluate(tree);
+  // "aaabbb" → 2 levels of nesting: s[0,6) → s[1,5) → s[2,4) (leaf, depth 0)
+  // s[2,4) depth=0, s[1,5) depth=1, s[0,6) depth=2
+  assertEquals(depth, 2);
+});
+
+Deno.test("SemanticPass — count nodes in balanced tree", () => {
+  const g = new Balanced();
+  const { trees } = g.parseToTree("aaabbb");
+  const tree = trees[0]!;
+  const count = new CountPass().evaluate(tree);
+  // 3 non-epsilon s nodes
+  assertEquals(count, 3);
+});
+
+Deno.test("SemanticPass — extract spans from balanced tree", () => {
+  const g = new Balanced();
+  const { trees } = g.parseToTree("aaabbb");
+  const tree = trees[0]!;
+  const spans = new SpanPass().evaluate(tree);
+  assertEquals(spans, "s[0,6), s[1,5), s[2,4)");
+});
+
+Deno.test("SemanticPass — leaf node (single pair 'ab')", () => {
+  const g = new Balanced();
+  const { trees } = g.parseToTree("ab");
+  const tree = trees[0]!;
+  const depth = new DepthPass().evaluate(tree);
+  // Single pair: root s has no children (inner s matched epsilon, filtered)
+  assertEquals(depth, 0);
+});
+
+Deno.test("SemanticPass — defaultHandler throws for arity-0 node (no method)", () => {
+  // A pass that doesn't override 's' — defaultHandler should passthrough
+  // the single child's result, but throw for arity-0.
+  class PassthroughPass extends SemanticPass<{ s: number }> {
+    // No s() method — relies on defaultHandler
+  }
+  const g = new Balanced();
+  const { trees } = g.parseToTree("ab");
+  const tree = trees[0]!;
+  // Root s has 0 children (epsilon filtered) → defaultHandler throws
+  let threw = false;
+  try {
+    new PassthroughPass().evaluate(tree);
+  } catch {
+    threw = true;
+  }
+  assertEquals(threw, true);
+});
+
+Deno.test("SemanticPass — defaultHandler passthrough for arity-1 node", () => {
+  // A pass that doesn't override 'mid' — defaultHandler should passthrough
+  // the single child's result for a 1-child node.
+  class LeafPass extends SemanticPass<{ s: number }> {
+    s(_node: DerivationNode, _children: number[]): number {
+      return 42;
+    }
+  }
+  // Build a tree: leaf (label "s", arity 0, has s method) → mid (label "mid", arity 1, no method).
+  const leaf = new DerivationNode("s", { start: 1, end: 2 }, []);
+  const mid = new DerivationNode("mid", { start: 0, end: 2 }, [leaf]);
+  const tree = new DerivationTree(mid, "ab");
+  // 'mid' has no method → defaultHandler passthrough returns leaf's result (42)
+  const result = new LeafPass().evaluate(tree);
+  assertEquals(result, 42);
+});
+
+Deno.test("SemanticPass — defaultHandler throws for arity != 1", () => {
+  class ThrowingPass extends SemanticPass<{ s: number }> {
+    // No s() method, no defaultHandler override
+  }
+  // Build a tree with a 2-child root manually
+  const c1 = new DerivationNode("s", { start: 0, end: 1 }, []);
+  const c2 = new DerivationNode("s", { start: 1, end: 2 }, []);
+  const root = new DerivationNode("s", { start: 0, end: 2 }, [c1, c2]);
+  const tree = new DerivationTree(root, "ab");
+  let threw = false;
+  try {
+    new ThrowingPass().evaluate(tree);
+  } catch (e) {
+    threw = true;
+    assertEquals((e as Error).message.includes("SemanticPass"), true);
+  }
+  assertEquals(threw, true);
+});
+
+Deno.test("SemanticPass — custom defaultHandler override", () => {
+  class CustomDefaultPass extends SemanticPass<{ s: number }> {
+    protected override defaultHandler(
+      _node: DerivationNode,
+      childResults: readonly unknown[],
+    ): unknown {
+      return childResults.length;
+    }
+  }
+  const c1 = new DerivationNode("s", { start: 0, end: 1 }, []);
+  const c2 = new DerivationNode("s", { start: 1, end: 2 }, []);
+  const root = new DerivationNode("s", { start: 0, end: 2 }, [c1, c2]);
+  const tree = new DerivationTree(root, "ab");
+  const result = new CustomDefaultPass().evaluate(tree);
+  // Root has 2 children, no s() method → custom defaultHandler returns 2
+  assertEquals(result, 2);
+});
+
+Deno.test("SemanticPass — inheritance composition (override one method)", () => {
+  // Base pass computes depth; subclass overrides to compute double depth
+  class DoubleDepthPass extends DepthPass {
+    override s(node: DerivationNode, children: number[]): number {
+      const base = super.s(node, children);
+      return base * 2;
+    }
+  }
+  const g = new Balanced();
+  const { trees } = g.parseToTree("aaabbb");
+  const tree = trees[0]!;
+  const depth = new DoubleDepthPass().evaluate(tree);
+  // Each node's result is doubled, including children:
+  // leaf: 0→0, middle: 1+0=1→2, root: 1+2=3→6
+  assertEquals(depth, 6);
+});
+
+Deno.test("SemanticPass — @ensures contract is enforced on semantic methods", () => {
+  // Contracts on SemanticPass methods work via the same wrapWithContracts
+  // Proxy as Grammar. A violating subclass should throw ContractError.
+  class NonNegativePass extends SemanticPass<{ s: number }> {
+    @ensures((_self, _node, _children, result) => result >= 0)
+    s(_node: DerivationNode, children: number[]): number {
+      return children.length === 0 ? 0 : 1 + Math.max(...children);
+    }
+  }
+  // A subclass that violates the postcondition
+  class ViolatingPass extends NonNegativePass {
+    override s(_node: DerivationNode, _children: number[]): number {
+      return -1; // violates @ensures (result >= 0)
+    }
+  }
+  const g = new Balanced();
+  const { trees } = g.parseToTree("ab");
+  const tree = trees[0]!;
+
+  // The base pass should work fine (result = 0, satisfies >= 0)
+  const ok = new NonNegativePass().evaluate(tree);
+  assertEquals(ok, 0);
+
+  // The violating pass should throw ContractError
+  let threw = false;
+  let caught: unknown = null;
+  try {
+    new ViolatingPass().evaluate(tree);
+  } catch (e) {
+    threw = true;
+    caught = e;
+  }
+  assertEquals(threw, true);
+  assertEquals((caught as Error).name, "ContractError");
+});
+
+Deno.test("SemanticPass — stateful pass (inherited attribute via this)", () => {
+  // A pass that collects all labels into an array via instance state
+  class CollectLabelsPass extends SemanticPass<{ s: string[] }> {
+    private labels: string[] = [];
+
+    s(node: DerivationNode, _children: string[][]): string[] {
+      this.labels.push(node.label);
+      return [...this.labels];
+    }
+  }
+  const g = new Balanced();
+  const { trees } = g.parseToTree("aaabbb");
+  const tree = trees[0]!;
+  const result = new CollectLabelsPass().evaluate(tree);
+  // 3 s nodes, each returns the accumulated labels
+  assertEquals(result, ["s", "s", "s"]);
 });

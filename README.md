@@ -353,34 +353,6 @@ the results, and re-parses until σₙ₊₁ = σₙ (convergence). An optional
 See [examples/circular-attr-demo.ts](examples/circular-attr-demo.ts) for a
 demonstration.
 
-## Tree-consuming grammars
-
-For passes whose input is an already-built tree (an AST or derivation tree)
-rather than source text, the engine also supports **tree-consuming grammars**
-via `TreeExp` and `flattenTree`. This is useful when a pass consumes a tree
-produced by a prior pass (e.g. desugaring, or consuming a derivation tree).
-A `TreeExp` matches a tree node by class name and dispatches to child
-sub-parsers by position, completing at the post-subtree offset — mirroring
-how `TokExp` completes at the next character position.
-
-```ts
-import { Grammar, rule, flattenTree, treeExp, or } from '@lapis-lang/zipper-grammar';
-
-class TreeEval extends Grammar<{ expr: number }> {
-    override start() { return this.expr; }
-    @rule get expr(): Parser<number> {
-        return or(this.numNode, this.addNode);
-    }
-    protected get addNode(): Parser<number> {
-        return treeExp('Add', [this.expr, this.expr],
-            (_n, [l, r]) => (l as number) + (r as number));
-    }
-}
-
-const toks = flattenTree(tree, childrenOf);
-const [v] = [...new TreeEval().parseTree(toks)]; // 7
-```
-
 ## Grammar-native contracts
 
 A typing rule like
@@ -702,12 +674,7 @@ Import from `@lapis-lang/zipper-grammar` and use without `this.`:
 | `between(open, p, close)` | Wrap `p` between delimiters, returning `p`'s result. |
 | `trim(p, ws)`         | Wrap `p` with `ws` on both sides.          |
 | `keyword(word, reserved?)` | Literal with reserved-word guard.     |
-| `flattenTree(root, childrenOf)` | Flatten a tree into a preorder `TreeTok[]` stream for tree-consuming grammars. |
-| `TreeExp(tag, children, fn?)` | Match a tree node by class name; dispatch to child sub-parsers by position. |
-| `treeExp(tag, children, fn?)` | Convenience wrapper for `TreeExp` that accepts `Parser<T>` children (not raw `Exp`). |
-| `exactTreeExp(tag, arity, children, fn?)` | Like `treeExp` but requires exact child-count match (for decorator grammars over derivation trees). |
-| `foldTree(tree, handlers)` | Fold a `DerivationTree` bottom-up with a handler per production label — the simplest way to run a semantic pass. |
-| `parserOf(exp)`       | Wrap a raw `Exp` (e.g. `TreeExp`) as a `Parser<T>`. |
+| `parserOf(exp)`       | Wrap a raw `Exp` as a `Parser<T>`. |
 
 ### `Grammar<S>` — abstract base
 
@@ -719,7 +686,6 @@ Subclass and define productions as `@rule` getters (or methods) returning
 | `ws` (overridable getter)           | Whitespace production used by `sseq`. Default: zero or more spaces/tabs/newlines/CR. |
 | `sseq(...parsers)`                  | Sigspace sequence — like `seq` but auto-inserts `this.ws` between terms. |
 | `parse(input)` / `recognize(input)` | Drivers — full forest / boolean.           |
-| `parseTree(treeTokens)`             | Parse a flattened tree-token stream (tree-consuming grammar). |
 | `parseSegment(input, startOffset, start, endOffset?)` | Parse a segment under `start`; spans are absolute. |
 | `parseSegmentFrom(input, checkpoint, endOffset?)` | Parse a segment from a `Checkpoint` (context baked in). |
 | `checkpointAt(input, offset)`        | Build a `Checkpoint` at a boundary (override in grammars with inherited context). |
@@ -907,35 +873,32 @@ tree.root.span;    // { start: 0, end: 11 } — absolute source span
 tree.root.children; // sub-derivations
 ```
 
-The derivation tree can be walked directly via `foldTree` (the simplest
-approach for most passes) or flattened via `derivationToTreeToks` and
-consumed by a `TreeExp`-based decorator grammar (grammar-over-grammar
-composition) when you need ambiguity handling or memoization:
+The derivation tree is walked by subclassing `SemanticPass` and overriding a
+method named after each production label. The method receives the node and the
+already-computed results of its children (in source order):
 
 ```ts
-import { foldTree, derivationToTreeToks, exactTreeExp, Grammar, rule, or } from '@lapis-lang/zipper-grammar';
+import { SemanticPass, Grammar, rule, or, seq, char, epsilon } from '@lapis-lang/zipper-grammar';
 
-// Simplest: foldTree — a plain recursive fold, no grammar subclass needed
-const depth = foldTree(tree, {
-  s: (_node, childResults) =>
-    childResults.length === 0 ? 0 : 1 + Math.max(...childResults),
-});
-
-// Advanced: TreeExp decorator grammar (grammar-over-grammar composition)
-const toks = derivationToTreeToks(tree);
-class MyDecorator extends Grammar<{ s: number }> {
-  start() { return this.s; }
-  @rule get s() {
-    // depth(s) = 1 + depth(child)   if s has a child
-    //          = 0                   if s is a leaf
-    return or(
-      exactTreeExp("s", 1, [this.s], (_n, [c]) => (c as number) + 1),
-      exactTreeExp("s", 0, [], () => 0),
-    );
+class DepthPass extends SemanticPass<{ s: number }> {
+  s(node: DerivationNode, children: number[]): number {
+    return children.length === 0 ? 0 : 1 + Math.max(...children);
   }
 }
-const result = new MyDecorator().parseTree(toks);
+const depth = new DepthPass().evaluate(tree);
 ```
+
+`SemanticPass` is the OOP-native way to run a semantic pass — subclass and
+override, mirroring the grammar's shape. It enables Code Contracts
+(`@ensures` / `@requires` / `@invariant` / `@rescue` on semantic methods),
+shape-typing (`SemanticPass<{ s: number }>`), inheritance composition
+(the Decorator pattern — override one method, inherit the rest), and stateful
+passes (inherited attributes via `this`).
+
+If a production label has no corresponding method, a default handler is used:
+for a node with exactly one child, the child's result is returned (passthrough
+for chains like `expr → term → factor`); otherwise an error is thrown. Override
+`defaultHandler` to customise this behaviour.
 
 The inline single-pass `parse()` path is **unaffected** — `parseToTree` is
 purely additive and does not change the behaviour or performance of
