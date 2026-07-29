@@ -63,9 +63,6 @@ export class Mem {
 
 /** In-focus grammar subexpression. Subclasses implement `descend` for the structural step. */
 export abstract class Exp {
-  /** Mutable memo: lazily updated as derivation reaches this node at new positions. */
-  m: Mem | undefined = undefined;
-
   /**
    * Optional production label — the `@rule` production name (from `ctx.name`
    * in the `@rule` decorator). Set by `Grammar._ruleSlot`/`_paramRuleSlot`
@@ -77,18 +74,19 @@ export abstract class Exp {
 
   /**
    * Descend into this Exp under context `parent`. Threads `parent` into
-   * existing memo if already visited at this position.
+   * the existing memo for this node at the current position if already
+   * visited, else creates a fresh memo.
    *
-   * **Per-pass memo isolation:** `Exp.m` persists on the grammar node across
-   * `parse()`/`recognize()` calls, but each `ZipperDriver` mints fresh `Pos`
-   * sentinels and clears `posToOffset` per run. A memo whose `startPos` is not
-   * in the current driver's offset map is a stale leftover from a prior pass;
-   * it is discarded so the second pass re-derives from scratch. This is the
-   * prerequisite for running the engine over the same grammar more than once
-   * (multi-pass attribute grammars).
+   * **Per-driver memo isolation (issue #32):** memo storage lives on the
+   * `ZipperDriver` (`driver.memos`), not on the shared grammar `Exp` node.
+   * Each driver has its own memo namespace, so a nested parse via
+   * `_forward`/`parseSegment` (a fresh driver) cannot corrupt the outer
+   * parse's in-flight memos — there is no shared mutable `Mem` to leak.
+   * This replaces the prior `Exp.m` field + stale-position reconciliation:
+   * cross-driver memo corruption (#28/#30/#32) is eliminated structurally.
    */
   goDown(driver: ZipperDriver, parent: Cxt): void {
-    const m0 = this.m;
+    const m0 = driver.memos.get(this);
     if (m0 && m0.startPos === driver.pos) {
       m0.parents.push(parent);
       // Re-flow all values that have already been produced at this position.
@@ -114,18 +112,12 @@ export abstract class Exp {
           parent.goUp(driver, m0.values[i]!, newBase + relExt);
         }
       }
-    } else if (m0 && !driver.posToOffset.has(m0.startPos)) {
-      // Stale memo from a prior pass — discard and re-derive.
-      const m = new Mem(driver.pos, [parent]);
-      m.exp = this;
-      m.derivPath = parent.derivPath;
-      this.m = m;
-      this.descend(driver, m);
     } else {
+      // Fresh descent (no prior memo at this position for this driver).
       const m = new Mem(driver.pos, [parent]);
       m.exp = this;
       m.derivPath = parent.derivPath;
-      this.m = m;
+      driver.memos.set(this, m);
       this.descend(driver, m);
     }
   }
@@ -480,11 +472,19 @@ type WorklistEntry = {
 
 /**
  * Owns all per-parse mutable state. A fresh driver per `parse`/`recognize`
- * call makes the engine re-entrant. The grammar itself is shared (its `Mem`
- * slots get rewritten each call — two concurrent parses on one grammar would
- * race).
+ * call makes the engine re-entrant. Memo storage lives here (in `memos`),
+ * not on the shared grammar `Exp` nodes, so a nested parse via a fresh driver
+ * cannot corrupt an outer parse's in-flight memos (issue #32).
  */
 export class ZipperDriver {
+  /**
+   * Per-driver memo namespace: maps each grammar `Exp` node to its `Mem` for
+   * this parse. Keyed by `Exp` identity. Lives on the driver (not on `Exp`)
+   * so each parse — including a nested `_forward`/`parseSegment` re-parse —
+   * has its own isolated memo space (issue #32). Reused across passes only
+   * by `reparseIncremental` (which reuses the same driver with `keepMemoMap`).
+   */
+  readonly memos: Map<Exp, Mem> = new Map();
   /** Pending (Mem, value) pairs to propagate upward at the next position. */
   worklist: WorklistEntry[] = [];
   /** Completed top-level parse values (the parse forest); reset each pass. */
@@ -769,6 +769,7 @@ export class ZipperDriver {
     if (!keepMemoMap) {
       this.posToOffset.clear();
       this.offsetToPosMap.clear();
+      this.memos.clear();
     }
     const initialPos = freshPos();
     this.posToOffset.set(initialPos, this.initialOffset);

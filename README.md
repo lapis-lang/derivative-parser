@@ -670,7 +670,10 @@ Import from `@lapis-lang/zipper-grammar` and use without `this.`:
 | `chain(first, fn)`    | Monadic bind — L-attributed grammar combinator. Result is `[T, U]`. |
 | `sseq(ws, ...parsers)`| Sigspace sequence — auto-inserts `ws` (non-capturing) between terms. |
 | `plus(p)`             | One-or-more repetition (`A+`).             |
-| `sepBy(p, sep)`       | Zero-or-more separated list.               |
+| `star(p)`             | Zero-or-more repetition (`A*`); alias of `p.many()`. |
+| `sepBy(p, sep)`        | Zero-or-more separated list.               |
+| `sepByStar(p, sep)`    | Alias of `sepBy` (the `*` form).           |
+| `sepByPlus(p, sep)`    | One-or-more separated list (non-nullable; use `.opt()` for "optionally a list"). |
 | `between(open, p, close)` | Wrap `p` between delimiters, returning `p`'s result. |
 | `trim(p, ws)`         | Wrap `p` with `ws` on both sides.          |
 | `keyword(word, reserved?)` | Literal with reserved-word guard.     |

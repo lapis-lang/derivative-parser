@@ -152,8 +152,44 @@ export function sepBy<T>(p: Parser<T>, sep: Parser<unknown>): Parser<T[]> {
   );
 }
 
-/** Zero-or-more repetition (`A*`), implemented via a cyclic `DelayedExp`. */
-function star<T>(p: Parser<T>): Parser<T[]> {
+/**
+ * Alias of {@link sepBy} — zero-or-more separated list (`*` form).
+ *
+ * Provided so the `Star`/`Plus` naming convention is symmetric: pair
+ * `sepByStar` with {@link sepByPlus}. `sepBy` remains the canonical name
+ * (used downstream); `sepByStar` is a non-breaking alias for discoverability.
+ */
+export const sepByStar = sepBy;
+
+/**
+ * One-or-more separated list (`+` form). Separators are not included in the
+ * result. `sepByPlus(digit, char(","))` ⇒ `["1","2","3"]` (fails on empty).
+ *
+ * Unlike {@link sepBy}, this is **not nullable** — it requires at least one
+ * element. Use `sepByPlus(p, sep).opt()` for an unambiguous "optionally a
+ * non-empty list" (empty → `undefined`, non-empty → `T[]`).
+ *
+ * **Footgun avoided:** `sepBy(p, sep).opt()` is redundant — `sepBy` already
+ * matches empty (returning `[]`), so `.opt()` adds a *second* empty match
+ * returning `undefined`. For empty input this yields two distinct values
+ * (`[]` and `undefined`) — a genuine semantic ambiguity, not a cosmetic
+ * duplicate. Prefer `sepByPlus(p, sep).opt()` when you need "optionally a
+ * list", or plain `sepBy(p, sep)` when zero elements should yield `[]`.
+ */
+export function sepByPlus<T>(p: Parser<T>, sep: Parser<unknown>): Parser<T[]> {
+  return seq(p, star(seq(sep, p).map(([, x]) => x))).map(([h, t]) => [h, ...t]);
+}
+
+/**
+ * Standalone `A*` — zero-or-more repetition, implemented via a cyclic
+ * `DelayedExp`. Equivalent to `p.many()` (the method form) and exported so
+ * the `Star`/`Plus` naming convention is available as standalone functions:
+ * pair `star` with {@link plus}.
+ *
+ * `p.many()` remains the canonical method form; `star` is a non-breaking
+ * alias for grammars that prefer the regex-style vocabulary.
+ */
+export function star<T>(p: Parser<T>): Parser<T[]> {
   const inner = p._exp;
   const repExp: DelayedExp<T[]> = new DelayedExp<T[]>(() =>
     new AltExp([

@@ -27,8 +27,11 @@ export {
   plus,
   pred,
   sepBy,
+  sepByPlus,
+  sepByStar,
   seq,
   sseq,
+  star,
   trim,
 } from "./combinators.ts";
 
