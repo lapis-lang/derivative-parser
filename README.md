@@ -671,6 +671,7 @@ Import from `@lapis-lang/zipper-grammar` and use without `this.`:
 | `sseq(ws, ...parsers)`| Sigspace sequence — auto-inserts `ws` (non-capturing) between terms. |
 | `plus(p)`             | One-or-more repetition (`A+`).             |
 | `sepBy(p, sep)`       | Zero-or-more separated list.               |
+| `sepBy1(p, sep)`      | One-or-more separated list (non-nullable; use `.opt()` for "optionally a list"). |
 | `between(open, p, close)` | Wrap `p` between delimiters, returning `p`'s result. |
 | `trim(p, ws)`         | Wrap `p` with `ws` on both sides.          |
 | `keyword(word, reserved?)` | Literal with reserved-word guard.     |

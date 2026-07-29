@@ -27,6 +27,7 @@ export {
   plus,
   pred,
   sepBy,
+  sepBy1,
   seq,
   sseq,
   trim,

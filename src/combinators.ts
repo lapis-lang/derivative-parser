@@ -152,6 +152,25 @@ export function sepBy<T>(p: Parser<T>, sep: Parser<unknown>): Parser<T[]> {
   );
 }
 
+/**
+ * One-or-more separated list. Separators are not included in the result.
+ * `sepBy1(digit, char(","))` ⇒ `["1","2","3"]` (fails on empty input).
+ *
+ * Unlike {@link sepBy}, this is **not nullable** — it requires at least one
+ * element. Use `sepBy1(p, sep).opt()` for an unambiguous "optionally a
+ * non-empty list" (empty → `undefined`, non-empty → `T[]`).
+ *
+ * **Footgun avoided:** `sepBy(p, sep).opt()` is redundant — `sepBy` already
+ * matches empty (returning `[]`), so `.opt()` adds a *second* empty match
+ * returning `undefined`. For empty input this yields two distinct values
+ * (`[]` and `undefined`) — a genuine semantic ambiguity, not a cosmetic
+ * duplicate. Prefer `sepBy1(p, sep).opt()` when you need "optionally a list",
+ * or plain `sepBy(p, sep)` when zero elements should yield `[]`.
+ */
+export function sepBy1<T>(p: Parser<T>, sep: Parser<unknown>): Parser<T[]> {
+  return seq(p, star(seq(sep, p).map(([, x]) => x))).map(([h, t]) => [h, ...t]);
+}
+
 /** Zero-or-more repetition (`A*`), implemented via a cyclic `DelayedExp`. */
 function star<T>(p: Parser<T>): Parser<T[]> {
   const inner = p._exp;
