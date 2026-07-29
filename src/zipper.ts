@@ -200,8 +200,21 @@ export class DelayedExp<T = unknown> extends Exp {
   }
 
   descend(driver: ZipperDriver, m: Mem): void {
-    // Delegate to the forced node, forwarding values upward through mem.
-    this.force().goDown(driver, new AltCxt(m));
+    // Descend the forced body directly under this DelayedExp's own Mem,
+    // bypassing the body's goDown memo. This prevents the shared forced
+    // body's Mem from accumulating parents across different DelayedExp
+    // instances (issue #28): when a @rule getter (e.g., ws) is called at
+    // the same position from different call sites, each call site's
+    // DelayedExp descends the body independently — the body's goDown
+    // re-entry would otherwise re-flow values to the new DelayedExp's Mem,
+    // producing duplicate parse results.
+    //
+    // Left-recursion growth is preserved: when the body references the
+    // SAME DelayedExp (via the @rule cache or cyclic many()), that
+    // DelayedExp's goDown handles re-entry at the same position
+    // (re-flowing seed values). The body's goDown memo is not needed for
+    // growth — it operates at the DelayedExp level.
+    this.force().descend(driver, m);
   }
 }
 
