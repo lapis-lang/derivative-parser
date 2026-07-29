@@ -1,6 +1,6 @@
 {
   "name": "@lapis-lang/zipper-grammar",
-  "version": "4.0.1",
+  "version": "4.0.2",
   "exports": "./src/index.ts",
   "license": "MPL-2.0",
   "publish": {

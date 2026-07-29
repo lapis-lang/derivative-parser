@@ -807,7 +807,11 @@ Multiple zippers explore different branches *simultaneously*:
 ![Ambiguity step 2 — three branches after input '+'](docs/diagrams/ambiguity-step2.svg)
 
 Each zipper carries its own accumulated value. At the end, all zippers that
-reach the exit produce a **parse forest** — one tree per valid parse.
+reach the exit produce a **parse forest** — one tree per valid parse. The
+forest is a `Set`, so it deduplicates by value: identical **primitive**
+results collapse (`or(char('a'), char('a'))` over `"a"` yields one result),
+while identical **object** results are kept as distinct entries (two
+`['a','b']` arrays from genuinely ambiguous branches stay two).
 
 ### The key trick: sharing notes (memoization)
 

@@ -17,17 +17,23 @@
  * When two call sites descended the same body at the same position, the
  * body's `goDown` re-entry re-flowed values to both — producing duplicates.
  *
- * Fix: `DelayedExp.descend` now calls `this.force().descend(driver, m)`
+ * Fix (v4.0.1): `DelayedExp.descend` now calls `this.force().descend(driver, m)`
  * directly, bypassing the body's `goDown` memo. Each `DelayedExp` descent
  * is independent. Left-recursion growth is preserved because it operates on
  * the `DelayedExp`'s own `goDown` re-entry, not the body's.
  *
- * Known limitation: the base case (a `@rule` getter re-entered at the
- * *same* position from two call sites, e.g. `ws` before and after `(`) still
- * produces a duplicate. The `DelayedExp`'s own `goDown` re-entry fires
- * before `descend` and re-flows values to the new parent. This re-flow is
- * required for left-recursion growth, so it cannot be removed. The
- * duplicate is cosmetic — both results are structurally identical.
+ * Base case (v4.0.2, issue #30): the v4.0.1 fix left a residual duplicate
+ * when a `@rule` getter was re-entered at the *same* position from two call
+ * sites (e.g. `ws` before and after `(`). The `DelayedExp`'s own `goDown`
+ * re-entry re-flowed the already-completed value to the new parent, and that
+ * re-flow is required for left-recursion growth so it cannot be removed.
+ * For multi-argument variant construction via `sepBy` this constant factor
+ * compounded to 2ⁿ across nesting levels. The v4.0.2 fix threads a
+ * *derivation path* (the sequence of `AltExp` branch choices from the root)
+ * through the engine: values re-flowed within ONE derivation share a path
+ * and are collapsed at the top, while values from genuinely different
+ * `AltExp` branches (real ambiguity) keep distinct paths and are preserved.
+ * The base case now yields a single result.
  */
 
 import { assertEquals } from "@std/assert";
@@ -213,23 +219,25 @@ Deno.test("Variant grammar — basic parses are correct (#28)", async (t) => {
   });
 });
 
-Deno.test("Variant grammar — base case (known limitation, #28)", async (t) => {
+Deno.test("Variant grammar — base case resolved (#30)", async (t) => {
   const g = new VariantGrammar();
 
-  // Known limitation: when the same `DelayedExp` for `ws` is re-entered at
-  // the SAME position from two call sites, `goDown`'s re-entry branch fires
-  // (before `descend`) and re-flows values to the new parent. This re-flow
-  // is required for left-recursion growth, so it cannot be removed. The
-  // duplicate is cosmetic — both results are structurally identical.
-  await t.step("single-level: E() → 2 identical results (not 1)", () => {
+  // The base case (a `@rule` getter re-entered at the SAME position from two
+  // call sites, e.g. `ws` before and after `(`) previously produced a
+  // cosmetic duplicate (size 2). The v4.0.2 derivation-path dedup (issue #30)
+  // collapses it: both results share a derivation path (the re-flow is within
+  // one derivation) so the top-level forest keeps a single result. Genuine
+  // ambiguity (distinct `AltExp` branches) is unaffected — see the ambiguity
+  // tests in `parser-algebra.test.ts`.
+  await t.step("single-level: E() → 1 result", () => {
     const result = g.parse("E()");
-    assertEquals(result.size, 2);
-    assertEquals([...result], [{ variant: "E" }, { variant: "E" }]);
+    assertEquals(result.size, 1);
+    assertEquals([...result], [{ variant: "E" }]);
   });
-  await t.step("multi-char: Empty() → 2 identical results (not 1)", () => {
+  await t.step("multi-char: Empty() → 1 result", () => {
     const result = g.parse("Empty()");
-    assertEquals(result.size, 2);
-    assertEquals([...result], [{ variant: "Empty" }, { variant: "Empty" }]);
+    assertEquals(result.size, 1);
+    assertEquals([...result], [{ variant: "Empty" }]);
   });
 });
 
