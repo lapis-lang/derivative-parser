@@ -1,4 +1,4 @@
-# Contributing to zipper-grammar
+# Contributing to lang-forma
 
 Internal details for contributors. Consumers should see the [README](README.md)
 for usage and the public API.

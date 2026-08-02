@@ -1,5 +1,5 @@
 {
-  "name": "@lapis-lang/zipper-grammar",
+  "name": "@lapis-lang/lang-forma",
   "version": "4.1.0",
   "exports": "./src/index.ts",
   "license": "MPL-2.0",
@@ -18,10 +18,18 @@
     "check-docs": "deno run --allow-read --allow-run=deno scripts/check_docs.ts"
   },
   "lint": {
-    "include": ["src/", "test/", "examples/"]
+    "include": [
+      "src/",
+      "test/",
+      "examples/"
+    ]
   },
   "fmt": {
-    "include": ["src/", "test/", "examples/"]
+    "include": [
+      "src/",
+      "test/",
+      "examples/"
+    ]
   },
   "compilerOptions": {
     "strict": true
