@@ -1,4 +1,4 @@
-# @lapis-lang/zipper-grammar
+# @lapis-lang/lang-forma
 
 A TypeScript implementation of **Parsing with Zippers** (Darragh & Adams,
 ICFP 2020) with full semantic actions, an object-oriented front-end inspired
@@ -9,7 +9,7 @@ including left-recursion and ambiguity — is handled by lazy references and
 the PwZ zipper engine.
 
 ```ts
-import { Grammar, rule, char, epsilon, or, seq } from '@lapis-lang/zipper-grammar';
+import { Grammar, rule, char, epsilon, or, seq } from '@lapis-lang/lang-forma';
 
 class BalancedParens extends Grammar<{ s: string }> {
     start() { return this.s; }
@@ -29,13 +29,13 @@ new BalancedParens().parse('()');         // Set { 'ok' }
 
 ```bash
 # Deno
-deno add jsr:@lapis-lang/zipper-grammar
+deno add jsr:@lapis-lang/lang-forma
 
 # npm / yarn / pnpm / bun
-npx jsr add @lapis-lang/zipper-grammar
+npx jsr add @lapis-lang/lang-forma
 ```
 
-Then import from `jsr:@lapis-lang/zipper-grammar` (Deno) or `@lapis-lang/zipper-grammar` (Node-style resolvers via the JSR npm compatibility layer).
+Then import from `jsr:@lapis-lang/lang-forma` (Deno) or `@lapis-lang/lang-forma` (Node-style resolvers via the JSR npm compatibility layer).
 
 ## Why "executable grammars"?
 
@@ -304,7 +304,7 @@ original input), so callers need no offset compensation.
 A **checkpoint** captures the inherited context at a boundary as a value:
 
 ```ts
-import type { Checkpoint } from '@lapis-lang/zipper-grammar';
+import type { Checkpoint } from '@lapis-lang/lang-forma';
 
 interface Checkpoint<T> {
     readonly offset: number;      // absolute char offset where the segment begins
@@ -408,7 +408,7 @@ parse failures) and narrows types in TypeScript — useful for the
 `unknown`-typed `ctx` in parameterised productions:
 
 ```ts
-import { assert, implies, iff } from '@lapis-lang/zipper-grammar';
+import { assert, implies, iff } from '@lapis-lang/lang-forma';
 
 @rule
 protected lambdaProd(ctx: unknown): Parser<S['expr']> {
@@ -433,7 +433,7 @@ so the branch is rejected without raising an exception. This replaces the
 manual `if`-guard-and-return-sentinel pattern with a declarative premise:
 
 ```ts
-import { requires } from '@lapis-lang/zipper-grammar';
+import { requires } from '@lapis-lang/lang-forma';
 
 // The Var rule's premise: x must be bound in Γ.
 @requires((_self, name, ctx) =>
@@ -455,7 +455,7 @@ manual annotation is needed inside the predicate. A violated postcondition
 is a *bug* (e.g. a missing `return`), so it throws `ContractError`:
 
 ```ts
-import { ensures } from '@lapis-lang/zipper-grammar';
+import { ensures } from '@lapis-lang/lang-forma';
 
 // The App rule's conclusion: the result is a valid Type.
 // `result: Type` is inferred from `app(...): Type`.
@@ -473,7 +473,7 @@ and after every contracted semantic-action call. Catches grammar
 construction bugs (e.g. a production that accidentally returns `undefined`):
 
 ```ts
-import { invariant } from '@lapis-lang/zipper-grammar';
+import { invariant } from '@lapis-lang/lang-forma';
 
 @invariant((self: AbstractSTLC<any>) => self.start() !== undefined)
 abstract class AbstractSTLC<S extends STLCShape> extends Grammar<S> { /* ... */ }
@@ -490,7 +490,7 @@ needed (for getter productions `args` is `[]`). Inherited unless overridden
 (most-derived wins):
 
 ```ts
-import { rescue } from '@lapis-lang/zipper-grammar';
+import { rescue } from '@lapis-lang/lang-forma';
 
 // `args` is inferred as `[unknown]` from `appProd(ctx: unknown)`.
 @rescue((self, failure, _args, retry) => {
@@ -536,7 +536,7 @@ per-instance so concurrent operations on different instances don't
 interfere.) Disable for zero production overhead:
 
 ```ts
-import { setCheckedMode } from '@lapis-lang/zipper-grammar';
+import { setCheckedMode } from '@lapis-lang/lang-forma';
 
 setCheckedMode(false);  // all instances skip checks — zero overhead
 ```
@@ -551,7 +551,7 @@ generators, or verifiers on top without the library committing to any
 specific use case.
 
 ```ts
-import { requires, ensures } from '@lapis-lang/zipper-grammar';
+import { requires, ensures } from '@lapis-lang/lang-forma';
 
 // The second argument is an arbitrary object — these keys (rule, role,
 // formula) are this author's choice; a JSON/CSV grammar could use entirely
@@ -570,7 +570,7 @@ protected app(fn: Type, _arg: Type): Type { return (fn as TFun).cod; }
 `@rule` accepts the same optional metadata, in factory form:
 
 ```ts
-import { rule } from '@lapis-lang/zipper-grammar';
+import { rule } from '@lapis-lang/lang-forma';
 
 @rule({ rule: 'T-App', production: 'appProd' })
 protected override appProd(ctx: unknown): Parser<Type> { /* ... */ }
@@ -623,7 +623,7 @@ Every `.map()` callback receives a `Span` as its second argument describing
 the half-open character-offset range `[start, end)` of the matched input:
 
 ```ts
-import type { Span } from '@lapis-lang/zipper-grammar';
+import type { Span } from '@lapis-lang/lang-forma';
 
 interface Node { text: string; span: Span }
 
@@ -649,13 +649,13 @@ import {
     setCheckedMode, getCheckedMode,
     ContractError, AssertionError,
     MonotonicityViolationError, FixpointDivergenceError,
-} from '@lapis-lang/zipper-grammar';
-import type { Span, Checkpoint, AttributionKind, Pos, Tok } from '@lapis-lang/zipper-grammar';
+} from '@lapis-lang/lang-forma';
+import type { Span, Checkpoint, AttributionKind, Pos, Tok } from '@lapis-lang/lang-forma';
 ```
 
 ### Combinators — standalone functions
 
-Import from `@lapis-lang/zipper-grammar` and use without `this.`:
+Import from `@lapis-lang/lang-forma` and use without `this.`:
 
 | Function              | Effect                                     |
 | --------------------- | ------------------------------------------ |
@@ -684,20 +684,21 @@ Import from `@lapis-lang/zipper-grammar` and use without `this.`:
 Subclass and define productions as `@rule` getters (or methods) returning
 `Parser<T>`. The base class provides:
 
-| Member                              | Effect                                     |
+| Member | Effect |
 | ----------------------------------- | ------------------------------------------ |
-| `ws` (overridable getter)           | Whitespace production used by `sseq`. Default: zero or more spaces/tabs/newlines/CR. |
-| `sseq(...parsers)`                  | Sigspace sequence — like `seq` but auto-inserts `this.ws` between terms. |
-| `parse(input)` / `recognize(input)` | Drivers — full forest / boolean.           |
+| `ws` (overridable getter) | Whitespace production used by `sseq`. Default: zero or more spaces/tabs/newlines/CR. |
+| `sseq(...parsers)` | Sigspace sequence — like `seq` but auto-inserts `this.ws` between terms. |
+| `parse(input)` / `recognize(input)` | Drivers — full forest / boolean. |
 | `parseSegment(input, startOffset, start, endOffset?)` | Parse a segment under `start`; spans are absolute. |
 | `parseSegmentFrom(input, checkpoint, endOffset?)` | Parse a segment from a `Checkpoint` (context baked in). |
-| `checkpointAt(input, offset)`        | Build a `Checkpoint` at a boundary (override in grammars with inherited context). |
-| `composeSegmentsS(forests)`          | Compose S-attributed segments (union of independent forests). |
+| `checkpointAt(input, offset)` | Build a `Checkpoint` at a boundary (override in grammars with inherited context). |
+| `composeSegmentsS(forests)` | Compose S-attributed segments (union of independent forests). |
 | `composeSegmentsL(input, cp, ends, nextCp)` | Compose L-attributed segments, threading context across boundaries. |
 | `reparseIncremental(input, start, editStart, editEnd, priorDriver)` | Re-parse after an edit, reusing memos for the unchanged region. |
 | `parseToFixpoint(sigma, parseBodies, join, eq?, maxIterations?)` | Iterate a fixpoint for circular attribute flow. |
 
 The `@rule` decorator can wrap either a **getter** or a **method**:
+
 - `@rule get foo()` — memoised per instance; the canonical form for
   non-parameterised productions.
 - `@rule foo(arg)` — memoised per `(instance, arg)`; use this for
@@ -729,15 +730,15 @@ The `@rule` decorator can wrap either a **getter** or a **method**:
 
 ### Contracts
 
-| Export          | Kind      | Effect                                                          |
+| Export | Kind | Effect |
 | --------------- | --------- | --------------------------------------------------------------- |
-| `assert(c, m?)` | function  | Inline assertion; throws `AssertionError` on failure; narrows `c`'s type. |
-| `implies(p, q)` | function  | Material implication `!p \|\| q`.                              |
-| `iff(p, q)`     | function  | Biconditional `(p && q) \|\| (!p && !q)`.                       |
-| `@requires`     | decorator | Precondition `(self, ...args) => boolean`; on failure returns `undefined` (graceful → `empty()`). `args` types are inferred from the decorated method. OR-ed across inheritance. |
-| `@ensures`      | decorator | Postcondition `(self, args, old, result) => boolean`; throws `ContractError` on failure. `args`/`result` inferred from the method; `old` is an `OldSnapshot<This>` (data-only). AND-ed across inheritance. |
-| `@invariant`    | decorator | Class invariant; checked after construction and after each contracted call. AND-ed across inheritance. |
-| `@rescue`       | decorator | Parse-failure recovery; handler `(self, failure, args, retry?) => unknown` invoked when a production yields an empty forest. `args` inferred from the decorated production (`Parameters`; `[]` for getters). Inherited (most-derived wins). |
+| `assert(c, m?)` | function | Inline assertion; throws `AssertionError` on failure; narrows `c`'s type. |
+| `implies(p, q)` | function | Material implication `!p \|\| q`. |
+| `iff(p, q)` | function | Biconditional `(p && q) \|\| (!p && !q)`. |
+| `@requires` | decorator | Precondition `(self, ...args) => boolean`; on failure returns `undefined` (graceful → `empty()`). `args` types are inferred from the decorated method. OR-ed across inheritance. |
+| `@ensures` | decorator | Postcondition `(self, args, old, result) => boolean`; throws `ContractError` on failure. `args`/`result` inferred from the method; `old` is an `OldSnapshot<This>` (data-only). AND-ed across inheritance. |
+| `@invariant` | decorator | Class invariant; checked after construction and after each contracted call. AND-ed across inheritance. |
+| `@rescue` | decorator | Parse-failure recovery; handler `(self, failure, args, retry?) => unknown` invoked when a production yields an empty forest. `args` inferred from the decorated production (`Parameters`; `[]` for getters). Inherited (most-derived wins). |
 | `setCheckedMode(b)` / `getCheckedMode()` | function | Toggle the global default for contract enforcement. Applies live to all instances (existing and new). When off, no Proxy is created for new instances and existing Proxies skip checks (zero overhead). |
 | `Grammar.metadata` | static getter | Aggregated contract metadata report across the inheritance chain — exposes both predicates and declarative meta. |
 | `collectMetadata(instanceOrClass)` | function | Build a `ContractMetadataReport` from an instance or a class. |
@@ -885,7 +886,7 @@ method named after each production label. The method receives the node and the
 already-computed results of its children (in source order):
 
 ```ts
-import { SemanticPass, Grammar, rule, or, seq, char, epsilon } from '@lapis-lang/zipper-grammar';
+import { SemanticPass, Grammar, rule, or, seq, char, epsilon } from '@lapis-lang/lang-forma';
 
 class DepthPass extends SemanticPass<{ s: number }> {
   s(node: DerivationNode, children: number[]): number {

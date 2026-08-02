@@ -190,7 +190,7 @@ export interface ContractMetadata {
  * `Symbol.metadata` object. Using a dedicated key avoids conflicting with
  * other decorators that may share `Symbol.metadata`.
  */
-const CONTRACTS = Symbol.for("@lapis-lang/zipper-grammar/contracts");
+const CONTRACTS = Symbol.for("@lapis-lang/lang-forma/contracts");
 
 /**
  * Retrieve (or initialise) the {@link ContractMetadata} stored on a given
@@ -895,7 +895,7 @@ export function collectMetadata(
  * contract Proxy can recognise and skip productions. Set by `Grammar`'s
  * `@rule` decorator via `_markProduction`.
  */
-const PRODUCTION = Symbol.for("@lapis-lang/zipper-grammar/production");
+const PRODUCTION = Symbol.for("@lapis-lang/lang-forma/production");
 
 /**
  * Mark a function as a `@rule` production (to be skipped by contract

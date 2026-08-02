@@ -1,5 +1,5 @@
 /**
- * Public entry point for the `@lapis-lang/zipper-grammar` package.
+ * Public entry point for the `@lapis-lang/lang-forma` package.
  * See the README for the full API documentation.
  */
 
