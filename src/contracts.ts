@@ -429,7 +429,7 @@ function* collectPredicates(
     const contracts = prop === undefined
       ? meta.invariants
       : (meta[table] as Record<PropertyKey, { predicate: unknown }[]>)[prop] ??
-      [];
+        [];
     for (const c of contracts) yield c.predicate as RequiresPredicate;
   }
 }
