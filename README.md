@@ -1,12 +1,12 @@
 # @lapis-lang/lang-forma
 
-A TypeScript implementation of **Parsing with Zippers** (Darragh & Adams,
-ICFP 2020) with full semantic actions, an object-oriented front-end inspired
-by Bracha's *executable grammars*.
+An executable grammar engine for TypeScript that unifies syntax, static semantics, dynamic semantics, and proof generation into single-pass derivations.
 
-Grammars are written as **classes**; productions are methods. Recursion —
-including left-recursion and ambiguity — is handled by lazy references and
-the PwZ zipper engine.
+Built on **Parsing with Zippers** (Darragh & Adams, ICFP 2020), monadic context threading, and grammar-native Design by Contract, **LangForma** expands on Gilad Bracha's concept of *executable grammars*. Rather than constructing passive ASTs for separate multi-pass visitor traversals, grammars are defined as object-oriented **classes** whose productions are methods—turning executable grammars into unified language engines and formal proof systems.
+
+> 📖 **Companion Article**: For a detailed breakdown of the theory, architecture, and design philosophy behind this library, see [Beyond the Parser: Executable Grammars and Semantics](https://thenewobjective.com/types-and-programming-languages/beyond-the-parser-executable-grammars/).
+
+Grammars are written as **classes**; productions are methods. Recursion — including left-recursion, context-sensitive parameters, and ambiguity — is handled natively by lazy references and the PwZ zipper engine.
 
 ```ts
 import { Grammar, rule, char, epsilon, or, seq } from '@lapis-lang/lang-forma';
