@@ -85,7 +85,7 @@ Deno.test("Phase 1 — classifyRule partitions value vs step", () => {
 
 Deno.test("Phase 1 — checkProgress holds for STLCEval", () => {
   const rules = collectRules(STLCEval);
-  const result = checkProgress(rules);
+  const result = checkProgress(rules, STLCEval);
   assert(result.holds);
   assertEquals(result.gaps.length, 0);
 });
@@ -98,8 +98,9 @@ Deno.test("Phase 1 — checkPreservation is vacuous for E-* rules", () => {
   assert(result.holds);
 });
 
-Deno.test("Phase 1 — Grammar.metatheory static getter", () => {
-  const report = STLCEval.metatheory;
+Deno.test("Phase 1 — verifyMetatheory with static+dynamic cross-check", () => {
+  // Full cross-check: STLCEval (dynamic) + STLCTypeCheck (static).
+  const report = verifyMetatheory(STLCEval, STLCTypeCheck);
   assert(report.holds);
   assert(report.progress.holds);
   assert(report.preservation.holds);
@@ -116,7 +117,7 @@ Deno.test("Phase 1 — verifyMetatheory on grammar without rules is vacuous", ()
 Deno.test("Phase 1 — Progress gap detected for rule with no conclusion", () => {
   // STLCTypeCheck's T-Var has a premise but no @ensures conclusion.
   const rules = collectRules(STLCTypeCheck);
-  const result = checkProgress(rules);
+  const result = checkProgress(rules, STLCTypeCheck);
   // T-Var is classified as a step-rule (has premise) but has no conclusion.
   assertFalse(result.holds);
   assert(result.gaps.some((g) => g.rule === "T-Var"));

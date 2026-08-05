@@ -2,7 +2,7 @@
  * Generative counterexample search — the dynamic layer of the metatheory
  * engine.
  *
- * Uses the #35 generator to synthesize well-formed terms, then checks
+ * Uses the grammar generator to synthesize well-formed terms, then checks
  * Progress and Preservation dynamically. This complements the static
  * analysis (`src/metatheory.ts`) and SMT (`src/smt.ts`) layers: where they
  * reason about the rule *structure*, this layer tests the *behavior* on
@@ -13,13 +13,15 @@
  *   result without getting stuck).
  * - **Preservation** (dynamic): for each generated term that steps, check
  *   that the stepped result has the same type as the original (requires a
- *   type-checking grammar).
+ *   type-checking grammar). For a one-pass evaluator, "stepping" is
+ *   evaluation — so Preservation means the evaluated value's type is
+ *   consistent with the type checker's result type for the source.
  *
  * @module
  */
 
 import type { Grammar, GrammarShape } from "./Grammar.ts";
-import type { GeneratorOptions } from "./generate.ts";
+import { RNG, type GeneratorOptions } from "./generate.ts";
 
 /* ======================================================================
  *  Types
@@ -56,27 +58,49 @@ export interface CounterexampleResult {
 }
 
 /* ======================================================================
- *  Tiny RNG (xorshift128) — seed reproducibility
+ *  Value-type inference
  * ====================================================================== */
 
-/** A seedable xorshift128 PRNG for reproducible counterexample search. */
-class XorShift128 {
-  private s: [number, number, number, number];
-  constructor(seed: number) {
-    const v = seed | 0 || 1;
-    this.s = [v, v ^ 0x6d2b79f5, (v << 13) ^ 0xdeadbeef, v ^ 0x9e3779b9];
-    for (let i = 0; i < 20; i++) this.next();
+/**
+ * Infer the type of an evaluated value, for the Preservation check. For
+ * STLC-style evaluators, values are closures (type `TFun`), booleans (type
+ * `Bool`), and numbers (type `Int`). This is a heuristic — grammars with
+ * different value spaces may need to override this logic.
+ *
+ * @returns A string representation of the value's type, or `undefined` if
+ *   the value's type cannot be inferred.
+ */
+function inferValueType(value: unknown): string | undefined {
+  if (typeof value === "boolean") return "Bool";
+  if (typeof value === "number") return "Int";
+  // Closures have a function type. We can't fully reconstruct the type
+  // from the closure alone (we'd need the body's type), but we can identify
+  // it as a function type.
+  if (value !== null && typeof value === "object" &&
+    "param" in value && "type" in value && "bodySpan" in value) {
+    return "σ → τ";
   }
-  next(): number {
-    let [x, y, z, w] = this.s;
-    const t = x ^ (x << 11);
-    x = y;
-    y = z;
-    z = w;
-    w = w ^ (w >>> 19) ^ (t ^ (t >>> 8));
-    this.s = [x, y, z, w];
-    return w >>> 0;
+  return undefined;
+}
+
+/**
+ * Check whether a value's inferred type is consistent with a type checker's
+ * result type. For base types (`Bool`, `Int`), this is a direct string
+ * match. For function types, any function type is consistent (the full
+ * type comparison requires re-checking the body, which is beyond the
+ * scope of the dynamic check).
+ */
+function typeConsistent(valueType: string, sourceType: string): boolean {
+  if (valueType === sourceType) return true;
+  // Both are function types — consistent (full comparison is the SMT
+  // layer's job).
+  if (valueType.includes("→") && sourceType.includes("→")) return true;
+  if (valueType.includes("→") && sourceType.includes("→")) return true;
+  // Fall back to arrow-variant check
+  if (valueType.includes("→") || sourceType.includes("→")) {
+    return valueType.includes("→") && sourceType.includes("→");
   }
+  return false;
 }
 
 /* ======================================================================
@@ -115,7 +139,7 @@ export function findCounterexamples<S extends GrammarShape>(
   const genOpts = options.generator ?? { maxDepth: 4, maxSteps: 1000 };
   const counterexamples: Counterexample[] = [];
 
-  const rng = new XorShift128(seed);
+  const rng = new RNG(seed);
 
   for (let run = 0; run < numRuns && counterexamples.length < 5; run++) {
     const runSeed = rng.next();
@@ -154,11 +178,10 @@ export function findCounterexamples<S extends GrammarShape>(
       continue;
     }
 
-    // Preservation check (optional): if a type checker is provided, check
-    // that the generated term is well-typed. A more sophisticated check
-    // would compare the result's type with the original's; here we verify
-    // the type checker accepts the source (full type correlation is left
-    // to the SMT layer).
+    // Preservation check (optional): if a type checker is provided, verify
+    // that the evaluated value's type is consistent with the type checker's
+    // result type for the source. This is the dynamic Subject Reduction
+    // check: if Γ ⊢ e : τ and e ⇓ v, then v has type τ.
     if (typeCheckGrammar) {
       try {
         const typeResults = [...typeCheckGrammar.parse(source)];
@@ -167,13 +190,22 @@ export function findCounterexamples<S extends GrammarShape>(
           // Preservation violation. Skip.
           continue;
         }
-        void typeResults[0];
-        void value;
-      } catch {
+        const sourceType = String(typeResults[0]);
+        const valueType = inferValueType(value);
+        if (valueType !== undefined && !typeConsistent(valueType, sourceType)) {
+          counterexamples.push({
+            property: "preservation",
+            source,
+            explanation:
+              `type mismatch: source has type "${sourceType}" but evaluated value has type "${valueType}"`,
+          });
+        }
+      } catch (e) {
         counterexamples.push({
           property: "preservation",
           source,
-          explanation: `type check failed on generated term: "${source}"`,
+          explanation:
+            `type check failed on generated term: ${(e as Error).message}`,
         });
       }
     }

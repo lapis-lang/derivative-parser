@@ -12,6 +12,7 @@
 import {
   collectRules,
   findCounterexamples,
+  verifyMetatheory,
   verifyPreservationSmt,
 } from "../src/index.ts";
 import { STLCEval, STLCTypeCheck } from "./stlc.ts";
@@ -33,7 +34,8 @@ for (const rule of evalRules) {
 
 console.log("-- Phase 1: Static Analysis (verifyMetatheory) --\n");
 
-const report = STLCEval.metatheory;
+// Full cross-check: STLCEval (dynamic) + STLCTypeCheck (static).
+const report = verifyMetatheory(STLCEval, STLCTypeCheck);
 console.log(`  Progress:    ${report.progress.holds ? "✓ holds" : "✗ FAILS"}`);
 console.log(`  Preservation: ${report.preservation.holds ? "✓ holds" : "✗ FAILS"}`);
 console.log(`  Overall:      ${report.holds ? "✓ holds" : "✗ FAILS"}`);

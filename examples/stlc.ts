@@ -210,7 +210,7 @@ export type Value = Closure | boolean | number;
 /**
  * Value classification for the dynamic semantics. A term is a *value* (a
  * normal form that needs no further evaluation) iff it is a closure, a
- * boolean, or a number. Used by the metatheory engine (#38) to partition
+ * boolean, or a number. Used by the metatheory engine to partition
  * terms into values vs. non-values for the **Progress** check
  * ($\\text{Well-Typed} \\implies \\text{Value} \\lor \\text{Can Step}$).
  */
@@ -912,7 +912,7 @@ export class STLCEval
    * evaluates to a closure (a value). This action is never called at runtime
    * (`lambdaProd` is overridden to capture the body span), but its
    * `@ensures` metadata is read by `collectRules` to expose the E-Abs
-   * conclusion for the metatheory engine (#38).
+   * conclusion for the metatheory engine.
    */
   @ensures(
     (_self, _args, _old, result) => isValueOrPlaceholder(result),
@@ -923,7 +923,9 @@ export class STLCEval
     },
   )
   protected override lam(_param: string, _type: Type, _body: Value): Value {
-    throw new Error("lam() unreachable — lambdaProd is overridden");
+    throw new Error(
+      "lam() unreachable — STLCEval overrides lambdaProd; this action exists only for @ensures metadata",
+    );
   }
 
   /**
@@ -931,7 +933,7 @@ export class STLCEval
    * the body's value. This action is never called at runtime (`letProd` is
    * overridden to thread the def value), but its `@ensures` metadata is read
    * by `collectRules` to expose the E-Let conclusion for the metatheory
-   * engine (#38).
+   * engine.
    */
   @ensures(
     (_self, _args, _old, result) => isValueOrPlaceholder(result),
@@ -947,7 +949,9 @@ export class STLCEval
     _def: Value,
     _body: Value,
   ): Value {
-    throw new Error("let_() unreachable — letProd is overridden");
+    throw new Error(
+      "let_() unreachable — STLCEval overrides letProd; this action exists only for @ensures metadata",
+    );
   }
 
   /**

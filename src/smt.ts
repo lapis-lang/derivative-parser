@@ -43,18 +43,13 @@ import type { PreservationResult, PreservationCheck } from "./metatheory.ts";
  * ====================================================================== */
 
 /**
- * The initialized Z3 high-level API. Lazily created on first
- * {@link initZ3} call so the WASM module is only downloaded when SMT
- * checking is actually used.
- */
-/**
  * The initialized Z3 high-level API. Opaque type — the actual Z3 bindings
  * are only available at runtime via {@link initZ3}. The type is kept
- * opaque (a branded `unknown`) so the `z3-solver` TypeScript types don't
- * pollute the global type space and interfere with decorator type
- * resolution in other modules.
+ * opaque so the `z3-solver` TypeScript types don't pollute the global
+ * type space and interfere with decorator type resolution in other
+ * modules.
  */
-export type Z3Api = {
+type Z3Api = {
   /** The Z3 context factory (high-level, Z3Py-like API). */
   Context: new <Name extends string>(name: Name) => unknown;
 };
@@ -95,7 +90,7 @@ let z3ApiPromise: Promise<Z3Api> | null = null;
  *
  * @returns The Z3 high-level API (`Context` factory).
  */
-export function initZ3(): Promise<Z3Api> {
+function initZ3(): Promise<Z3Api> {
   if (z3ApiPromise) return z3ApiPromise;
   z3ApiPromise = (async () => {
     // Use a computed specifier so Deno's type-checker doesn't statically
@@ -119,10 +114,10 @@ export function initZ3(): Promise<Z3Api> {
  * ====================================================================== */
 
 /** The outcome of an SMT implication check. */
-export type SmtStatus = "valid" | "invalid" | "unknown";
+type SmtStatus = "valid" | "invalid" | "unknown";
 
 /** The result of an SMT implication check. */
-export interface SmtResult {
+interface SmtResult {
   /** The outcome: `valid` if the implication holds (premises ⊢ conclusion). */
   status: SmtStatus;
   /**
@@ -148,8 +143,9 @@ export interface SmtResult {
  * 1. **Explicit `meta.type`** (string or array of strings) — the structured
  *    form preferred by the SMT encoder.
  * 2. **Formula parsing** — extract type-variable tokens after `:` or `<:`
- *    in the formula string. Recognises Greek letters (σ, τ, ρ, …) and
- *    single-letter type variables, plus arrow types (`σ → τ`).
+ *    in the formula string. Splits arrow types (`σ → τ`) into components.
+ *    Does not scan for Greek letters outside type-annotation positions,
+ *    to avoid false tokens from rule names or descriptions.
  *
  * @returns An array of type-token strings, or `undefined` if no types are
  *   discoverable.
@@ -161,13 +157,13 @@ function clauseTypeTokens(clause: RuleClause): string[] | undefined {
   if (Array.isArray(metaType)) {
     return metaType.filter((t): t is string => typeof t === "string");
   }
-  // 2. Parse type-variable tokens from the formula.
+  // 2. Parse type-variable tokens from type-annotation positions in the
+  //    formula. Match `: TypeExpr` or `<: TypeExpr` patterns only — not
+  //    Greek letters appearing elsewhere (which could be rule names or
+  //    descriptions).
   const formula = clause.formula;
   if (!formula) return undefined;
-  // Match type variables: Greek letters (σ, τ, ρ, α, β, …) optionally in
-  // arrow types (σ → τ), and identifiers after `:` or `<:`.
   const tokens = new Set<string>();
-  // Match `: TypeExpr` or `<: TypeExpr` patterns — capture the type expr.
   const typeAnnRe = /(?:<:|:)\s*([^\s,∧∨→]+(?:\s*→\s*[^\s,∧∨→]+)*)/g;
   let m: RegExpExecArray | null;
   while ((m = typeAnnRe.exec(formula)) !== null) {
@@ -177,11 +173,6 @@ function clauseTypeTokens(clause: RuleClause): string[] | undefined {
       const t = part.trim();
       if (t) tokens.add(t);
     }
-  }
-  // Also collect standalone Greek-letter type variables mentioned anywhere.
-  const greekRe = /[στυρβαβγδπφχψω]/g;
-  while ((m = greekRe.exec(formula)) !== null) {
-    tokens.add(m[0]!);
   }
   return tokens.size > 0 ? [...tokens] : undefined;
 }
@@ -203,7 +194,7 @@ function clauseTypeTokens(clause: RuleClause): string[] | undefined {
  * @param conclusion The conclusion clause (to be derived).
  * @returns The SMT check result.
  */
-export async function checkImplication(
+async function checkImplication(
   premises: readonly RuleClause[],
   conclusion: RuleClause,
 ): Promise<SmtResult> {

@@ -29,6 +29,7 @@ import {
   type FormattedInferenceRule,
   type RuleClause,
 } from "./rules.ts";
+import { collectMetadata } from "./contracts.ts";
 
 /* ======================================================================
  *  Types
@@ -165,18 +166,23 @@ export function classifyRules(
  * is either a value (matched by some value-rule) or can take a step
  * (matched by some step-rule's premises).
  *
- * The static check verifies that the rule set is *structurally complete*:
- * every step-rule has premises that can fire (no step-rule is vacuously
- * unsatisfiable), and the value-rules and step-rules together cover the
- * grammar's constructors. A gap is reported when a step-rule's premises
- * reference a constructor that has no matching value-rule or step-rule.
+ * The static check verifies **constructor coverage**: every `@rule`
+ * production in the grammar is either a value-rule (produces a normal form)
+ * or has at least one step-rule linked to it (can transition). A gap is
+ * reported when a production is neither a value-rule nor covered by a
+ * step-rule — meaning a term built by that production would be stuck
+ * (neither a value nor able to step).
  *
  * @param rules The dynamic-semantics inference rules (e.g. from
  *   `collectRules(STLCEval)`).
+ * @param grammarClass The grammar class, used to enumerate `@rule`
+ *   productions. When omitted, the check falls back to rule-structure
+ *   analysis only (no constructor coverage).
  * @returns The Progress check result.
  */
 export function checkProgress(
   rules: readonly FormattedInferenceRule[],
+  grammarClass?: abstract new (...args: unknown[]) => unknown,
 ): ProgressResult {
   const classified = classifyRules(rules);
   const stepRules = classified.filter((c) => c.kind === "step");
@@ -184,21 +190,20 @@ export function checkProgress(
 
   const gaps: ProgressGap[] = [];
 
-  // A step-rule with no premises would be misclassified (premises ⇒ step),
-  // so every step-rule has ≥1 premise. Check that each step-rule's premises
-  // are satisfiable — i.e. the premise formulas reference constructors that
-  // are produced by some rule (value or step) in the set. This is a
-  // structural completeness check.
-  const allProductions = new Set<string>();
-  for (const c of classified) {
-    if (c.rule.production) allProductions.add(c.rule.production);
-    for (const m of c.rule.methods) {
-      allProductions.add(String(m));
-    }
+  // Collect all productions/methods linked to step-rules and value-rules.
+  const stepProductions = new Set<string>();
+  const valueProductions = new Set<string>();
+  for (const c of stepRules) {
+    if (c.rule.production) stepProductions.add(c.rule.production);
+    for (const m of c.rule.methods) stepProductions.add(String(m));
+  }
+  for (const c of valueRules) {
+    if (c.rule.production) valueProductions.add(c.rule.production);
+    for (const m of c.rule.methods) valueProductions.add(String(m));
   }
 
+  // Check each step-rule is well-formed (has premises and a conclusion).
   for (const c of stepRules) {
-    // Check that the step-rule is linked to a production (so it can fire).
     if (!c.rule.production && c.rule.methods.length === 0) {
       gaps.push({
         rule: c.rule.name,
@@ -207,13 +212,42 @@ export function checkProgress(
       });
       continue;
     }
-    // Check that the step-rule has a conclusion (it must produce a result).
     if (c.rule.conclusion.length === 0) {
       gaps.push({
         rule: c.rule.name,
         explanation:
           `step-rule "${c.rule.name}" has no conclusion — it does not produce a result term`,
       });
+    }
+  }
+
+  // Constructor coverage: enumerate all @rule productions from the grammar
+  // class's metadata and check that each *semantic* production (one linked
+  // to a dynamic-semantics rule) is either a value-rule or covered by a
+  // step-rule. Productions not linked to any E-* rule are infrastructure
+  // (syntax, types, whitespace) and are excluded from the Progress check.
+  if (grammarClass) {
+    const meta = collectMetadata(grammarClass);
+    // Collect all productions linked to any dynamic-semantics rule.
+    const semanticProductions = new Set<string>();
+    for (const c of classified) {
+      if (c.rule.production) semanticProductions.add(c.rule.production);
+      for (const m of c.rule.methods) semanticProductions.add(String(m));
+    }
+    for (const [key, methodReport] of Object.entries(meta.methods)) {
+      if (!methodReport.isRule) continue;
+      const prodName = key;
+      // Only check productions that are linked to a dynamic-semantics rule.
+      if (!semanticProductions.has(prodName)) continue;
+      const isValue = valueProductions.has(prodName);
+      const canStep = stepProductions.has(prodName);
+      if (!isValue && !canStep) {
+        gaps.push({
+          rule: prodName,
+          explanation:
+            `production "${prodName}" is neither a value-rule nor covered by a step-rule — a term built by this production would be stuck (neither a value nor able to step)`,
+        });
+      }
     }
   }
 
@@ -264,17 +298,39 @@ function clauseType(clause: RuleClause): string | undefined {
  * is consistent with the premises' types. Since formulas are free-form
  * strings, this is a *syntactic* consistency check: it verifies that a
  * type appears in both the premise and the conclusion (or that no type is
- * declared, in which case the check is vacuous). The SMT layer (Phase 2)
- * strengthens this with automated implication checking.
+ * declared, in which case the check is vacuous). The SMT layer
+ * (`verifyPreservationSmt`) strengthens this with automated implication
+ * checking.
+ *
+ * When `staticRules` (the typing rules, e.g. from `collectRules(STLCTypeCheck)`)
+ * are provided, the check also verifies that each step-rule's conclusion
+ * type is a type that the typing rules can produce — i.e. the result of
+ * stepping is still well-typed. This is the Subject Reduction invariant
+ * proper: the stepped term's type is in the image of the typing relation.
  *
  * @param rules The dynamic-semantics inference rules.
+ * @param staticRules The static-semantics (typing) inference rules, for
+ *   cross-checking that stepped types are well-typed. Optional.
  * @returns The Preservation check result.
  */
 export function checkPreservation(
   rules: readonly FormattedInferenceRule[],
+  staticRules?: readonly FormattedInferenceRule[],
 ): PreservationResult {
   const classified = classifyRules(rules);
   const stepRules = classified.filter((c) => c.kind === "step");
+
+  // Collect all types producible by the typing rules (the image of the
+  // typing relation), if static rules are provided.
+  const typedConclusionTypes = new Set<string>();
+  if (staticRules) {
+    for (const r of staticRules) {
+      for (const c of r.conclusion) {
+        const ty = clauseType(c);
+        if (ty) typedConclusionTypes.add(ty);
+      }
+    }
+  }
 
   const checks: PreservationCheck[] = stepRules.map((c) => {
     const rule = c.rule;
@@ -303,6 +359,18 @@ export function checkPreservation(
       const conclusionType = conclusionTypes[0]!;
       const matches = premiseTypes.some((pt) => pt === conclusionType);
       if (matches) {
+        // Also check that the conclusion type is in the image of the
+        // typing relation (if static rules are provided).
+        if (staticRules && typedConclusionTypes.size > 0) {
+          if (!typedConclusionTypes.has(conclusionType)) {
+            return {
+              rule: rule.name,
+              preserves: false,
+              explanation:
+                `conclusion type "${conclusionType}" is not producible by any typing rule — the stepped term may be ill-typed`,
+            };
+          }
+        }
         return {
           rule: rule.name,
           preserves: true,
@@ -357,14 +425,21 @@ export function checkPreservation(
  * metatheory engine.
  *
  * @param grammarClass The grammar class (e.g. `STLCEval`).
+ * @param staticGrammarClass The static-semantics (typing) grammar class
+ *   (e.g. `STLCTypeCheck`), for cross-checking Preservation against the
+ *   typing relation. Optional.
  * @returns The combined metatheory report.
  */
 export function verifyMetatheory(
   grammarClass: abstract new (...args: unknown[]) => unknown,
+  staticGrammarClass?: abstract new (...args: unknown[]) => unknown,
 ): MetatheoryReport {
   const rules = collectRules(grammarClass);
-  const progress = checkProgress(rules);
-  const preservation = checkPreservation(rules);
+  const staticRules = staticGrammarClass
+    ? collectRules(staticGrammarClass)
+    : undefined;
+  const progress = checkProgress(rules, grammarClass);
+  const preservation = checkPreservation(rules, staticRules);
   return {
     progress,
     preservation,
