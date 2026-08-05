@@ -3,10 +3,10 @@
  *
  * Demonstrates the native metatheory engine on the STLC exemplar:
  * - Static analysis (Phase 1): verifyMetatheory on STLCEval's E-* rules.
- * - SMT implication checking (Phase 2): verifyPreservationSmt on STLCTypeCheck.
+ * - Unification-based implication checking (Phase 2): verifyPreservation on STLCTypeCheck.
  * - Generative counterexample search (Phase 3): findCounterexamples.
  *
- * Run: `deno run --allow-read examples/stlc-metatheory-demo.ts`
+ * Run: `deno run examples/stlc-metatheory-demo.ts`
  */
 
 import {
@@ -52,7 +52,7 @@ if (report.progress.gaps.length > 0) {
   }
 }
 
-/* ── Phase 2: SMT-based implication checking ───────────────────────── */
+/* ── Phase 2: Unification-based implication checking ──────────────── */
 
 console.log("\n-- Phase 2: Unification Checking (verifyPreservation) --\n");
 

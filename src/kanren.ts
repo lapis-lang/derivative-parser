@@ -11,10 +11,6 @@
  *   that `yield`/`for...of` can express backtracking choice points, with
  *   `try/finally` for automatic undo on backtracking.
  *
- * The engine is pure TypeScript with zero dependencies. It works on all
- * JS runtimes (Deno, Node, Bun, Cloudflare Workers, browsers) — no WASM,
- * no `SharedArrayBuffer`, no file loading.
- *
  * ## Core operations
  *
  * | Operation | Effect |

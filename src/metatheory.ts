@@ -16,10 +16,10 @@
  *   premise types.
  *
  * This is the **rule-structure-first** layer of the metatheory engine: pure
- * static analysis over `InferenceRule[]`, no SMT. The SMT layer
- * (`src/smt.ts`, Phase 2) strengthens Preservation with automated
- * implication checking; the generative layer (Phase 3) searches for
- * counterexamples via the #35 generator.
+ * static analysis over `InferenceRule[]`, no unification. The unification
+ * layer (`verifyPreservation`) strengthens Preservation with
+ * automated implication checking; the generative layer searches for
+ * counterexamples via the grammar generator.
  *
  * @module
  */
@@ -298,7 +298,7 @@ function clauseType(clause: RuleClause): string | undefined {
  * is consistent with the premises' types. Since formulas are free-form
  * strings, this is a *syntactic* consistency check: it verifies that a
  * type appears in both the premise and the conclusion (or that no type is
- * declared, in which case the check is vacuous). The SMT layer
+ * declared, in which case the check is vacuous). The unification layer
  * (`verifyPreservation`) strengthens this with unification-based
  * implication checking.
  *
@@ -379,7 +379,7 @@ export function checkPreservation(
         };
       }
       // Types don't syntactically match — flag as a potential violation.
-      // (The SMT layer may still prove preservation if the types are
+      // (The unification layer may still prove preservation if the types are
       // structurally equal but named differently.)
       return {
         rule: rule.name,

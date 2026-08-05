@@ -149,7 +149,7 @@ export abstract class Grammar<S extends GrammarShape = GrammarShape> {
   /**
    * Verify the metatheory (Progress + Preservation) of this grammar class's
    * dynamic-semantics rules. Pure static analysis over the first-class
-   * {@link InferenceRule} model — no SMT, no term generation.
+   * {@link InferenceRule} model — no unification, no term generation.
    *
    * Progress checks constructor coverage: every `@rule` production is
    * either a value-rule or covered by a step-rule. Preservation checks

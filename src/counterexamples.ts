@@ -4,7 +4,7 @@
  *
  * Uses the grammar generator to synthesize well-formed terms, then checks
  * Progress and Preservation dynamically. This complements the static
- * analysis (`src/metatheory.ts`) and unification (`src/smt.ts`) layers: where they
+ * analysis (`src/metatheory.ts`) and unification (`src/unify.ts`) layers: where they
  * reason about the rule *structure*, this layer tests the *behavior* on
  * concrete terms.
  *
@@ -92,7 +92,7 @@ function inferValueType(value: unknown): string | undefined {
  */
 function typeConsistent(valueType: string, sourceType: string): boolean {
   if (valueType === sourceType) return true;
-  // Both are function types — consistent (full comparison is the SMT
+  // Both are function types — consistent (full comparison is the unification
   // layer's job).
   if (valueType.includes("→") && sourceType.includes("→")) return true;
   if (valueType.includes("→") && sourceType.includes("→")) return true;

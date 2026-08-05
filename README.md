@@ -1097,7 +1097,7 @@ See `examples/stlc-metatheory-demo.ts` for a full demonstration.
 - [Design by Contract](https://en.wikipedia.org/wiki/Design_by_contract),
   [Liskov Substitution Principle](https://en.wikipedia.org/wiki/Liskov_substitution_principle).
 - [AutoProof Verifier (ETH Zürich)](https://se.inf.ethz.ch/research/autoproof/) —
-  inspiration for the bounded-unrolling contract→SMT technique.
+  inspiration for the bounded-unrolling contract→unification technique.
 - [microKanren (Hemann & Friedman, 2013)](https://github.com/jasonhemann/microKanren) —
   the minimal relational programming core that inspired the yield-kanren engine.
 - [Yield Prolog](https://yieldprolog.sourceforge.net/) —

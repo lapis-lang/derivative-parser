@@ -4,7 +4,7 @@
  * Covers:
  * - Phase 0: Dynamic-semantics step-rule annotations on STLCEval.
  * - Phase 1: Static Progress/Preservation analysis (verifyMetatheory).
- * - Phase 2: SMT-based implication checking (verifyPreservationSmt).
+ * - Phase 2: Unification-based implication checking (verifyPreservation).
  * - Phase 3: Generative counterexample search (findCounterexamples).
  */
 

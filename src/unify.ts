@@ -4,10 +4,8 @@
  *
  * Uses the yield-kanren engine (`src/kanren.ts`) to check whether the
  * conclusion of an inference rule is implied by its premises via
- * unification. This replaces the earlier Z3-based SMT layer with a
- * pure-TypeScript implementation that works on all JS runtimes (Deno,
- * Node, Bun, Cloudflare Workers, browsers) — no WASM, no
- * `SharedArrayBuffer`, no file loading.
+ * unification. Pure TypeScript — works on all JS runtimes (Deno, Node,
+ * Bun, Cloudflare Workers, browsers) with no external dependencies.
  *
  * ## Approach
  *
@@ -24,9 +22,9 @@
  * uses `unify` to check whether the conclusion's type unifies with any
  * premise's type. If unification succeeds, the implication holds.
  *
- * Unlike the earlier string-equality check, unification handles
- * **recursive types** properly: `σ → τ` unifies with `Int → Bool` (with
- * `σ = Int`, `τ = Bool`), and `σ → τ` unifies with `σ → τ` (trivially).
+ * Unification handles **recursive types** properly: `σ → τ` unifies with
+ * `Int → Bool` (with `σ = Int`, `τ = Bool`), and `σ → τ` unifies with
+ * `σ → τ` (trivially).
  *
  * @module
  */
@@ -182,10 +180,8 @@ function unifyGoal(u: LogicValue, v: LogicValue) {
  * annotations, the check is vacuous and the result mirrors the static
  * check.
  *
- * Unlike the earlier Z3-based approach, this uses pure TypeScript with
- * no external dependencies — it works on all JS runtimes (Deno, Node,
- * Bun, Cloudflare Workers, browsers) without `--allow-read` or WASM
- * loading.
+ * Pure TypeScript with no external dependencies — works on all JS
+ * runtimes (Deno, Node, Bun, Cloudflare Workers, browsers).
  *
  * @param grammarClass The grammar class (e.g. `STLCTypeCheck`).
  * @returns The unification-backed Preservation check result.
