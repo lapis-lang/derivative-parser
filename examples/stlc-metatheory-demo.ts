@@ -3,7 +3,7 @@
  *
  * Demonstrates the native metatheory engine on the STLC exemplar:
  * - Static analysis (Phase 1): verifyMetatheory on STLCEval's E-* rules.
- * - Unification-based implication checking (Phase 2): Grammar.preservation.
+ * - Unification-based implication checking (Phase 2): metatheory.preservation.unification.
  * - Generative counterexample search (Phase 3): findCounterexamples.
  *
  * Run: `deno run examples/stlc-metatheory-demo.ts`
@@ -53,19 +53,19 @@ if (report.progress.gaps.length > 0) {
 
 /* ── Phase 2: Unification-based implication checking ──────────────── */
 
-console.log("\n-- Phase 2: Unification Checking (Grammar.preservation) --\n");
+console.log("\n-- Phase 2: Unification Checking (metatheory.preservation.unification) --\n");
 
 console.log("  STLCTypeCheck (T-* typing rules):");
-const tcResult = STLCTypeCheck.preservation;
-for (const c of tcResult.checks) {
+const tcReport = STLCTypeCheck.metatheory;
+for (const c of tcReport.preservation.unification ?? []) {
   console.log(
     `    ${c.rule}: ${c.preserves ? "✓" : "✗"} — ${c.explanation}`,
   );
 }
 
-const evResult = STLCEval.preservation;
 console.log("\n  STLCEval (E-* step rules):");
-for (const c of evResult.checks) {
+const evReport = STLCEval.metatheory;
+for (const c of evReport.preservation.unification ?? []) {
   console.log(
     `    ${c.rule}: ${c.preserves ? "✓" : "✗"} — ${c.explanation}`,
   );

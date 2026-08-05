@@ -17,8 +17,8 @@
  *
  * This is the **rule-structure-first** layer of the metatheory engine: pure
  * static analysis over `InferenceRule[]`, no unification. The unification
- * layer (`Grammar.preservation`) strengthens Preservation with
- * automated implication checking; the generative layer searches for
+ * layer (`Grammar.metatheory` → `preservation.unification`) strengthens
+ * Preservation with automated implication checking; the generative layer searches for
  * counterexamples via the grammar generator.
  *
  * @module
@@ -30,7 +30,7 @@ import {
   type RuleClause,
 } from "./rules.ts";
 import { collectMetadata } from "./contracts.ts";
-import { clauseTypeTokens } from "./unify.ts";
+import { clauseTypeTokens, verifyPreservation } from "./unify.ts";
 
 /* ======================================================================
  *  Types
@@ -80,8 +80,14 @@ export interface ProgressGap {
 export interface PreservationResult {
   /** `true` if Preservation holds (all step-rules preserve types). */
   holds: boolean;
-  /** Per-rule preservation checks. */
+  /** Per-rule preservation checks (static analysis). */
   checks: PreservationCheck[];
+  /**
+   * Per-rule unification-based preservation checks (yield-kanren
+   * strengthening). `undefined` when unification is not applicable (e.g.
+   * no type annotations in the rules).
+   */
+  unification?: PreservationCheck[];
 }
 
 /** The Preservation check for a single step-rule. */
@@ -293,7 +299,8 @@ function clauseType(clause: RuleClause): string | undefined {
  * strings, this is a *syntactic* consistency check: it verifies that a
  * type appears in both the premise and the conclusion (or that no type is
  * declared, in which case the check is vacuous). The unification layer
- * (`Grammar.preservation`) strengthens this with unification-based
+ * (`Grammar.metatheory` → `preservation.unification`) strengthens this
+ * with unification-based
  * implication checking.
  *
  * When `staticRules` (the typing rules, e.g. from `collectRules(STLCTypeCheck)`)
@@ -415,8 +422,17 @@ export function checkPreservation(
 
 /**
  * Verify both Progress and Preservation for a grammar class's
- * dynamic-semantics rules. This is the main entry point for the static
- * metatheory engine.
+ * dynamic-semantics rules. This is the main entry point for the metatheory
+ * engine.
+ *
+ * Runs three layers:
+ * 1. **Static Progress** — constructor coverage check.
+ * 2. **Static Preservation** — syntactic type consistency.
+ * 3. **Unification Preservation** — yield-kanren type unification
+ *    (strengthens the static check).
+ *
+ * The `preservation` field of the returned report includes both the static
+ * checks (`checks`) and the unification checks (`unification`).
  *
  * @param grammarClass The grammar class (e.g. `STLCEval`).
  * @param staticGrammarClass The static-semantics (typing) grammar class
@@ -434,9 +450,13 @@ export function verifyMetatheory(
     : undefined;
   const progress = checkProgress(rules, grammarClass);
   const preservation = checkPreservation(rules, staticRules);
+  // Strengthen Preservation with unification-based type checking.
+  const unification = verifyPreservation(grammarClass);
+  preservation.unification = unification.checks;
   return {
     progress,
     preservation,
-    holds: progress.holds && preservation.holds,
+    holds: progress.holds && preservation.holds &&
+      unification.holds,
   };
 }

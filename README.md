@@ -1064,13 +1064,11 @@ protected override app(fn: Value, arg: Value): Value { ... }
 ```ts
 import { STLCEval, STLCTypeCheck } from './examples/stlc.ts';
 
-// Static analysis (Progress + Preservation):
+// Static analysis + unification (Progress + Preservation):
 const report = STLCEval.metatheory;
 console.log(report.progress.holds);    // true
 console.log(report.preservation.holds); // true
-
-// Unification-backed Preservation (strengthens the static check):
-const result = STLCTypeCheck.preservation;
+console.log(report.preservation.unification?.length); // 2
 
 // Generative counterexample search:
 import { findCounterexamples } from '@lapis-lang/lang-forma';
