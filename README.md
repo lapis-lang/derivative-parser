@@ -1078,7 +1078,7 @@ const search = findCounterexamples(ev, tc, { numRuns: 100, seed: 42 });
 console.log(search.passed); // true
 ```
 
-See `examples/stlc-metatheory-demo.ts` for a full demonstration.
+See [examples/stlc-metatheory-demo.ts](examples/stlc-metatheory-demo.ts) for a full demonstration.
 
 ## References
 
