@@ -47,6 +47,7 @@ export class Var {
   constructor(id: number) {
     this.id = id;
   }
+  /** Returns a display string of the form `_.<id>`. */
   toString(): string {
     return `_.${this.id}`;
   }
@@ -84,6 +85,7 @@ export class Term {
     this.tag = tag;
     this.args = args;
   }
+  /** Returns the tag for atoms, or `tag(arg₁, arg₂, …)` for compound terms. */
   toString(): string {
     return this.args.length === 0
       ? this.tag
@@ -100,6 +102,7 @@ export class Term {
  * Represented as a `Map` for O(1) lookup.
  */
 export class Substitution {
+/** The internal variable-to-value binding map. */
   private readonly bindings: Map<Var, LogicValue>;
   private constructor(bindings: Map<Var, LogicValue>) {
     this.bindings = bindings;
@@ -247,9 +250,13 @@ export function eq(u: LogicValue, v: LogicValue): Goal {
  */
 let varCounter = 0;
 
+/** Introduce a single fresh logic variable. */
 export function fresh(f: (x: Var) => Goal): Goal;
+/** Introduce two fresh logic variables. */
 export function fresh(f: (x: Var, y: Var) => Goal): Goal;
+/** Introduce three fresh logic variables. */
 export function fresh(f: (x: Var, y: Var, z: Var) => Goal): Goal;
+/** Introduce fresh logic variables (implementation overload). */
 export function fresh(f: (...vars: Var[]) => Goal): Goal {
   return function* (s: Substitution): Generator<Substitution> {
     const baseId = varCounter;
