@@ -553,16 +553,16 @@ specific use case.
 ```ts
 import { requires, ensures } from '@lapis-lang/lang-forma';
 
-// The second argument is an arbitrary object — these keys (rule, role,
+// The second argument is an arbitrary object — these keys (rule,
 // formula) are this author's choice; a JSON/CSV grammar could use entirely
 // different keys. The library stores and round-trips it opaquely.
 @requires(
     (_self, fn, arg) => fn instanceof TFun && typeEq(fn.dom, arg),
-    { rule: 'T-App', role: 'premise', formula: 'fn : σ → τ  ∧  arg <: σ' },
+    { rule: 'T-App', formula: 'fn : σ → τ  ∧  arg <: σ' },
 )
 @ensures(
     (_self, _args, _old, result) => result instanceof TVar || result instanceof TFun,
-    { rule: 'T-App', role: 'conclusion', formula: 'result : τ' },
+    { rule: 'T-App', formula: 'result : τ' },
 )
 protected app(fn: Type, _arg: Type): Type { return (fn as TFun).cod; }
 ```
@@ -584,7 +584,7 @@ predicate and the declarative metadata for each contract:
 import { STLCTypeCheck } from './stlc.ts';
 
 const report = STLCTypeCheck.metadata;
-// report.methods.app.requires[0].meta  → { rule: 'T-App', role: 'premise', formula: '...' }
+// report.methods.app.requires[0].meta  → { rule: 'T-App', formula: '...' }
 // report.methods.app.requires[0].predicate  → the executable (self, fn, arg) => boolean
 
 // Invoke a predicate reflectively (pass the instance as `self`):
@@ -1035,17 +1035,23 @@ The engine has three layers:
 
 To verify Progress and Preservation, the dynamic-semantics rules (evaluation
 judgments `ρ ⊢ e ⇓ v`) must be annotated with `@requires`/`@ensures` metadata
-following the `rule`/`role`/`formula` convention, just like the static
-semantics:
+following the `rule`/`formula` convention, just like the static
+semantics. The optional `role` key distinguishes **side conditions**
+(`@requires` with `role: "side"` — constraints that are not judgments
+about sub-terms, e.g. `τ₁ = Bool`) and **frame conditions** (`@ensures`
+with `role: "frame"` — what the rule preserves, e.g. the store is
+unchanged except for `x`). When `role` is omitted, `@requires` defaults to
+`"premise"` and `@ensures` defaults to `"conclusion"` — so the common
+case needs no `role` key:
 
 ```ts
 @requires(
   (_self, fn, _arg) => fn instanceof Closure,
-  { rule: "E-App", role: "premise", formula: "ρ ⊢ e₁ ⇓ ⟨x,τ,span,ρ'⟩" },
+  { rule: "E-App", formula: "ρ ⊢ e₁ ⇓ ⟨x,τ,span,ρ'⟩" },
 )
 @ensures(
   (_self, _args, _old, result) => isValueOrPlaceholder(result),
-  { rule: "E-App", role: "conclusion", formula: "ρ ⊢ e₁ e₂ ⇓ v" },
+  { rule: "E-App", formula: "ρ ⊢ e₁ e₂ ⇓ v" },
 )
 protected override app(fn: Value, arg: Value): Value { ... }
 ```

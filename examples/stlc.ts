@@ -654,7 +654,6 @@ export class STLCTypeCheck
     (_self, _args, _old, result) => result instanceof TFun,
     {
       rule: "T-Abs",
-      role: "conclusion",
       formula: "result : σ → τ",
       description:
         "the abstraction has a function type from the parameter's type to the body's type",
@@ -669,7 +668,7 @@ export class STLCTypeCheck
    * inferred from the method signature — no manual annotation needed.
    *
    * The second argument to `@requires` / `@ensures` is arbitrary declarative
-   * metadata — the library imposes no schema; these keys (`rule`, `role`,
+   * metadata — the library imposes no schema; these keys (`rule`,
    * `formula`) are this example's choice. Both the predicate and the meta
    * are exposed reflectively via `STLCTypeCheck.metadata`.
    */
@@ -677,7 +676,6 @@ export class STLCTypeCheck
     (_self, fn, arg) => fn instanceof TFun && typeEq(fn.dom, arg),
     {
       rule: "T-App",
-      role: "premise",
       formula: "fn : σ → τ  ∧  arg <: σ",
       description:
         "function must have a function type and argument must be a subtype of its domain",
@@ -688,7 +686,6 @@ export class STLCTypeCheck
       result instanceof TVar || result instanceof TFun,
     {
       rule: "T-App",
-      role: "conclusion",
       formula: "result : τ",
       description: "the application has the function's return type",
     },
@@ -706,7 +703,6 @@ export class STLCTypeCheck
       ctx instanceof TypeEnv && ctx.lookup(name) !== undefined,
     {
       rule: "T-Var",
-      role: "premise",
       formula: "Γ(x) = τ",
       description: "the variable must be bound in the typing context",
     },
@@ -817,7 +813,6 @@ export class STLCEval
     (_self, fn, _arg) => fn instanceof Closure,
     {
       rule: "E-App",
-      role: "premise",
       formula: "ρ ⊢ e₁ ⇓ ⟨x,τ,span,ρ'⟩",
       description:
         "the function position evaluates to a closure (a value)",
@@ -827,7 +822,6 @@ export class STLCEval
     (_self, _args, _old, result) => isValueOrPlaceholder(result),
     {
       rule: "E-App",
-      role: "conclusion",
       formula: "ρ ⊢ e₁ e₂ ⇓ v",
       description: "the application evaluates to a value",
     },
@@ -861,7 +855,6 @@ export class STLCEval
       ctx instanceof ValEnv && ctx.lookup(name) !== undefined,
     {
       rule: "E-Var",
-      role: "premise",
       formula: "ρ(x) = v",
       description: "the variable must be bound in the value environment",
     },
@@ -870,7 +863,6 @@ export class STLCEval
     (_self, _args, _old, result) => isValueOrPlaceholder(result),
     {
       rule: "E-Var",
-      role: "conclusion",
       formula: "ρ ⊢ x ⇓ v",
       description: "the variable evaluates to its bound value",
     },
@@ -888,7 +880,6 @@ export class STLCEval
     (_self, _args, _old, result) => typeof result === "boolean",
     {
       rule: "E-Bool",
-      role: "conclusion",
       formula: "b ⇓ b",
       description: "a boolean literal is a value",
     },
@@ -904,7 +895,6 @@ export class STLCEval
     (_self, _args, _old, result) => typeof result === "number",
     {
       rule: "E-Int",
-      role: "conclusion",
       formula: "n ⇓ n",
       description: "an integer literal is a value",
     },
@@ -928,7 +918,6 @@ export class STLCEval
     (_self, _args, _old, result) => isValueOrPlaceholder(result),
     {
       rule: "E-Abs",
-      role: "conclusion",
       formula: "λx:τ. body ⇓ ⟨x,τ,span,ρ⟩",
       description: "a lambda abstraction evaluates to a closure (a value)",
     },
@@ -946,9 +935,8 @@ export class STLCEval
    */
   @ensures(
     (_self, _args, _old, result) => isValueOrPlaceholder(result),
-       {
+    {
       rule: "E-Let",
-      role: "conclusion",
       formula: "ρ ⊢ let x:τ = def in body ⇓ v",
       description: "the let-binding evaluates to the body's value",
     },

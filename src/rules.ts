@@ -93,13 +93,13 @@ export interface RuleClause {
 export interface InferenceRule {
   /** The rule name, e.g. `"T-App"` (from `meta.rule`). */
   name: string;
-  /** The premises (`@requires` contracts with `role: "premise"`). */
+  /** The premises (`@requires` contracts; `role` defaults to `"premise"`). */
   premises: RuleClause[];
-  /** The conclusion (`@ensures` contracts with `role: "conclusion"`). */
+  /** The conclusion (`@ensures` contracts; `role` defaults to `"conclusion"`). */
   conclusion: RuleClause[];
-  /** Side conditions (`@requires` contracts with `role: "side"`). */
+  /** Side conditions (`@requires` contracts with `role: "side"` — constraints that are not judgments about sub-terms). */
   sideConditions: RuleClause[];
-  /** Frame conditions (`@ensures` contracts with `role: "frame"`). */
+  /** Frame conditions (`@ensures` contracts with `role: "frame"` — what the rule preserves, e.g. unchanged state). */
   frameConditions: RuleClause[];
   /**
    * The semantic-action method name(s) that carry this rule's contracts.
