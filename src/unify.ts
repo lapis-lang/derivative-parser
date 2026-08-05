@@ -74,7 +74,10 @@ export function clauseTypeTokens(clause: RuleClause): string[] | undefined {
   let m: RegExpExecArray | null;
   while ((m = typeAnnRe.exec(formula)) !== null) {
     const ty = m[1]!.trim();
-    // Split arrow types into components: "σ → τ" → ["σ", "τ"].
+    // Keep the full type expression (e.g. "σ → τ") so the unification
+    // engine can match arrow types structurally, and also split arrow
+    // types into components so individual type variables are visible.
+    tokens.add(ty);
     for (const part of ty.split("→")) {
       const t = part.trim();
       if (t) tokens.add(t);
