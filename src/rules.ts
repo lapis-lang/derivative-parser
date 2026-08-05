@@ -333,17 +333,21 @@ export function collectRules(
  * notation:
  *
  * ```text
- * premise₁   premise₂   …
- * ─────────────────────────  ruleName  if ϕ   provided ψ
- * conclusion
+ * premise₁   premise₂   …        if ϕ
+ * ─────────────────────────  ruleName
+ * conclusion                     provided ψ
  * ```
  *
  * Premises appear above the line; the conclusion appears below. Side
- * conditions (`if ϕ`) and frame conditions (`provided ψ`) are placed on the
- * rule-name line, following the separation-logic convention. When there
- * are no premises, the line is drawn with nothing above it (an axiom).
+ * conditions (`if ϕ`) are placed above the bar, right-aligned beyond the
+ * premises; frame conditions (`provided ψ`) are placed below the bar,
+ * right-aligned beyond the conclusion. This keeps side conditions
+ * visually associated with premises and frame conditions with conclusions,
+ * while the `if`/`provided` prefixes distinguish them from actual
+ * judgments. The bar width is sized to the premises/conclusions only.
  *
- * The separator line is sized to the widest content above or below it.
+ * When there are no premises, the line is drawn with nothing above it
+ * (an axiom).
  *
  * @example
  * ```ts
@@ -355,44 +359,73 @@ export function collectRules(
  * ```
  */
 export function formatRule(rule: InferenceRule): string {
-  // Collect lines above the bar: premises (split on ∧ into spaced judgments).
-  // Below: conclusions. Side conditions and frame conditions go on the
-  // rule-name line (separation-logic convention: "if ϕ" and "provided ψ").
   const clauseText = (c: RuleClause, fallback: string) =>
     c.formula ?? c.description ?? fallback;
-  const above = [
-    ...rule.premises.map((p) =>
-      clauseText(p, `[${rule.name} premise]`)
-        .split(/\s*∧\s*/).filter((s) => s.length > 0).join("    ")
-    ),
-  ];
-  const below = [
-    ...rule.conclusion.map((c) => clauseText(c, `[${rule.name} conclusion]`)),
-  ];
 
-  // Build the rule-name label with side conditions ("if ϕ") and frame
-  // conditions ("provided ψ") appended, per the separation-logic convention.
-  const namePart = rule.production
-    ? `${rule.name}  (${rule.production})`
-    : rule.name;
-  const sidePart = rule.sideConditions.length > 0
-    ? "  if " + rule.sideConditions.map((s) => clauseText(s, "")).join(", ")
-    : "";
-  const framePart = rule.frameConditions.length > 0
-    ? "  provided " + rule.frameConditions.map((f) => clauseText(f, "")).join(", ")
-    : "";
-  const label = namePart + sidePart + framePart;
+  // Premises above the bar (split on ∧ into spaced judgments).
+  const premises = rule.premises.map((p) =>
+    clauseText(p, `[${rule.name} premise]`)
+      .split(/\s*∧\s*/).filter((s) => s.length > 0).join("    ")
+  );
+  // Conclusions below the bar.
+  const conclusions = rule.conclusion.map((c) =>
+    clauseText(c, `[${rule.name} conclusion]`)
+  );
 
+  // Side conditions: "if ϕ" — placed above the bar, right-aligned.
+  const sideText = rule.sideConditions.length > 0
+    ? "if " + rule.sideConditions.map((s) => clauseText(s, "")).join(", ")
+    : "";
+  // Frame conditions: "provided ψ" — placed below the bar, right-aligned.
+  const frameText = rule.frameConditions.length > 0
+    ? "provided " + rule.frameConditions.map((f) => clauseText(f, "")).join(", ")
+    : "";
+
+  // The bar width is determined by premises/conclusions only.
   const contentWidth = Math.max(
     0,
-    ...above.map((l) => l.length),
-    ...below.map((l) => l.length),
+    ...premises.map((l) => l.length),
+    ...conclusions.map((l) => l.length),
   );
+  const label = rule.production
+    ? `${rule.name}  (${rule.production})`
+    : rule.name;
   const barWidth = Math.max(
     contentWidth + 4,
     contentWidth - (label.length + 2) + 4,
   );
   const barLine = "\u2500".repeat(barWidth) + "  " + label;
+
+  // Build the above/below lines, appending side/frame text right-aligned
+  // beyond the bar width. The side/frame text appears once, on the first
+  // line (or on its own line if there are no premises/conclusions).
+  const padBeyond = (line: string, suffix: string): string => {
+    if (!suffix) return line;
+    const padding = Math.max(2, barWidth - line.length);
+    return line + " ".repeat(padding) + suffix;
+  };
+
+  // Above: premises, with side condition appended to the first line
+  // (or on its own line if there are no premises).
+  const above: string[] = [...premises];
+  if (sideText) {
+    if (above.length > 0) {
+      above[0] = padBeyond(above[0]!, sideText);
+    } else {
+      above.push(sideText);
+    }
+  }
+
+  // Below: conclusions, with frame condition appended to the first line
+  // (or on its own line if there are no conclusions).
+  const below: string[] = [...conclusions];
+  if (frameText) {
+    if (below.length > 0) {
+      below[0] = padBeyond(below[0]!, frameText);
+    } else {
+      below.push(frameText);
+    }
+  }
 
   return [above.join("\n"), barLine, below.join("\n")]
     .filter((s) => s.length > 0)

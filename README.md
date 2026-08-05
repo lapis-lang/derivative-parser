@@ -1043,8 +1043,15 @@ with `role: "frame"` — what the rule preserves, e.g. the store is
 unchanged except for `x`). When `role` is omitted, `@requires` defaults to
 `"premise"` and `@ensures` defaults to `"conclusion"` — so the common
 case needs no `role` key. In `format()` output, side conditions appear as
-`if ϕ` and frame conditions as `provided ψ` on the rule-name line,
-following the separation-logic convention:
+`if ϕ` above the bar (right-aligned beyond the premises) and frame
+conditions as `provided ψ` below the bar (right-aligned beyond the
+conclusion):
+
+```text
+premise₁   premise₂   …        if ϕ
+────────────────────────────────  ruleName
+conclusion                     provided ψ
+```
 
 ```ts
 @requires(
