@@ -995,9 +995,26 @@ tApp.production;  // "appProd"
 ```
 
 Each rule has a `format()` method that renders it in standard proof-tree
-notation — premises above the bar, conclusion below, with the rule name
-labeling the line. Conjoined premises (`∧`) are split into the traditional
-horizontal spacing:
+notation. The layout maps directly to the decorator metadata:
+
+```text
+premise₁   premise₂   …        if ϕ
+────────────────────────────────  ruleName  (production)
+conclusion                     provided ψ
+```
+
+| Position | Decorator | `role` (default) | `role` (override) |
+|---|---|---|---|
+| Above the bar | `@requires` | `"premise"` (omitted) | `"side"` → `if ϕ` |
+| Rule-name line | `@rule({ rule, production })` | — | — |
+| Below the bar | `@ensures` | `"conclusion"` (omitted) | `"frame"` → `provided ψ` |
+
+Premises (`@requires`) appear above the bar; the conclusion (`@ensures`)
+appears below. The `@rule` metadata supplies the rule name and links the
+production. Side conditions (`@requires` with `role: "side"`) render as
+`if ϕ` right-aligned above the bar; frame conditions (`@ensures` with
+`role: "frame"`) render as `provided ψ` right-aligned below the bar.
+Conjoined premises (`∧`) are split into the traditional horizontal spacing:
 
 ```ts
 console.log(tApp.format());
