@@ -25,9 +25,9 @@
  */
 
 import {
-  collectRules,
-  classifyRules,
   type ClassifiedRule,
+  classifyRules,
+  collectRules,
   type FormattedInferenceRule,
   type RuleClause,
 } from "./rules.ts";
@@ -308,7 +308,9 @@ export function checkPreservation(
         rule: rule.name,
         preserves: false,
         explanation:
-          `conclusion type "${conclusionType}" does not match any premise type [${premiseTypes.join(", ")}]`,
+          `conclusion type "${conclusionType}" does not match any premise type [${
+            premiseTypes.join(", ")
+          }]`,
       };
     }
 

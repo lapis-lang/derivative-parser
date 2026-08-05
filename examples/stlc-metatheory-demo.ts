@@ -36,7 +36,9 @@ console.log("-- Phase 1: Static Analysis (verifyMetatheory) --\n");
 // Full cross-check: STLCEval (dynamic) + STLCTypeCheck (static).
 const report = verifyMetatheory(STLCEval, STLCTypeCheck);
 console.log(`  Progress:    ${report.progress.holds ? "✓ holds" : "✗ FAILS"}`);
-console.log(`  Preservation: ${report.preservation.holds ? "✓ holds" : "✗ FAILS"}`);
+console.log(
+  `  Preservation: ${report.preservation.holds ? "✓ holds" : "✗ FAILS"}`,
+);
 console.log(`  Overall:      ${report.holds ? "✓ holds" : "✗ FAILS"}`);
 
 console.log("\n  Rule classification:");
@@ -53,7 +55,9 @@ if (report.progress.gaps.length > 0) {
 
 /* ── Phase 2: Unification-based implication checking ──────────────── */
 
-console.log("\n-- Phase 2: Unification Checking (metatheory.preservation.unification) --\n");
+console.log(
+  "\n-- Phase 2: Unification Checking (metatheory.preservation.unification) --\n",
+);
 
 console.log("  STLCTypeCheck (T-* typing rules):");
 const tcReport = STLCTypeCheck.metatheory;

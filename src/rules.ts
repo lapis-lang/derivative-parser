@@ -378,7 +378,8 @@ export function formatRule(rule: InferenceRule): string {
     : "";
   // Frame conditions: "provided ψ" — placed below the bar, right-aligned.
   const frameText = rule.frameConditions.length > 0
-    ? "provided " + rule.frameConditions.map((f) => clauseText(f, "")).join(", ")
+    ? "provided " +
+      rule.frameConditions.map((f) => clauseText(f, "")).join(", ")
     : "";
 
   // The bar width is determined by premises/conclusions only.

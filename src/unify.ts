@@ -30,13 +30,9 @@
  */
 
 import type { RuleClause } from "./rules.ts";
-import { collectRules, classifyRules } from "./rules.ts";
-import type { PreservationResult, PreservationCheck } from "./metatheory.ts";
-import {
-  eq,
-  parseType,
-  runExists,
-} from "./kanren.ts";
+import { classifyRules, collectRules } from "./rules.ts";
+import type { PreservationCheck, PreservationResult } from "./metatheory.ts";
+import { eq, parseType, runExists } from "./kanren.ts";
 
 /* ======================================================================
  *  Type extraction
@@ -152,8 +148,9 @@ function checkImplication(
 
   return {
     valid: false,
-    explanation:
-      `conclusion type(s) [${conclusionTypes.join(", ")}] do not unify with any premise type [${premiseTypes.join(", ")}]`,
+    explanation: `conclusion type(s) [${
+      conclusionTypes.join(", ")
+    }] do not unify with any premise type [${premiseTypes.join(", ")}]`,
   };
 }
 

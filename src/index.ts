@@ -91,7 +91,12 @@ export {
 export type { DerivationRecord } from "./derivation.ts";
 
 /* ── First-class inference rules ── */
-export { collectRules, formatRule, classifyRule, classifyRules } from "./rules.ts";
+export {
+  classifyRule,
+  classifyRules,
+  collectRules,
+  formatRule,
+} from "./rules.ts";
 export type {
   ClassifiedRule,
   FormattedInferenceRule,
@@ -136,8 +141,8 @@ export {
   run,
   runExists,
   Substitution,
-  term,
   Term,
+  term,
   unify,
   Var,
 } from "./kanren.ts";

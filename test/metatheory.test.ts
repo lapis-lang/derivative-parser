@@ -18,12 +18,7 @@ import {
   verifyMetatheory,
 } from "../src/index.ts";
 import { MathEval } from "../examples/arith.ts";
-import {
-  STLCTypeCheck,
-  STLCEval,
-  ValEnv,
-  isValue,
-} from "../examples/stlc.ts";
+import { isValue, STLCEval, STLCTypeCheck, ValEnv } from "../examples/stlc.ts";
 
 /* ── Phase 0: Dynamic-semantics step-rule annotations ──────────────── */
 
@@ -78,7 +73,12 @@ Deno.test("Phase 1 — classifyRule partitions value vs step", () => {
   const classified = classifyRules(rules);
   const valueRules = classified.filter((c) => c.kind === "value");
   const stepRules = classified.filter((c) => c.kind === "step");
-  assertEquals(valueRules.map((c) => c.rule.name).sort(), ["E-Abs", "E-Bool", "E-Int", "E-Let"]);
+  assertEquals(valueRules.map((c) => c.rule.name).sort(), [
+    "E-Abs",
+    "E-Bool",
+    "E-Int",
+    "E-Let",
+  ]);
   assertEquals(stepRules.map((c) => c.rule.name).sort(), ["E-App", "E-Var"]);
 });
 
@@ -135,7 +135,9 @@ Deno.test("Phase 2 — metatheory.preservation.unification on STLCEval (vacuous)
 Deno.test("Phase 2 — metatheory.preservation.unification on STLCTypeCheck", () => {
   const report = STLCTypeCheck.metatheory;
   // T-App passes (τ unifies with σ or τ); T-Var has no conclusion → fails.
-  const tAppCheck = report.preservation.unification?.find((c) => c.rule === "T-App");
+  const tAppCheck = report.preservation.unification?.find((c) =>
+    c.rule === "T-App"
+  );
   assertExists(tAppCheck);
   assert(tAppCheck!.preserves);
 });

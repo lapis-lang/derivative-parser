@@ -12,7 +12,7 @@ import {
   wrapWithContracts,
 } from "./contracts.ts";
 import { collectRules, type FormattedInferenceRule } from "./rules.ts";
-import { verifyMetatheory, type MetatheoryReport } from "./metatheory.ts";
+import { type MetatheoryReport, verifyMetatheory } from "./metatheory.ts";
 import {
   GenerationError,
   Generator,

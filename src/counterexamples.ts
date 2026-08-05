@@ -21,7 +21,7 @@
  */
 
 import type { Grammar, GrammarShape } from "./Grammar.ts";
-import { RNG, type GeneratorOptions } from "./generate.ts";
+import { type GeneratorOptions, RNG } from "./generate.ts";
 
 /* ======================================================================
  *  Types
@@ -191,8 +191,9 @@ export function findCounterexamples<S extends GrammarShape>(
       counterexamples.push({
         property: "progress",
         source,
-        explanation:
-          `generated term gets stuck on re-evaluation: ${(e as Error).message}`,
+        explanation: `generated term gets stuck on re-evaluation: ${
+          (e as Error).message
+        }`,
       });
       continue;
     }

@@ -814,8 +814,7 @@ export class STLCEval
     {
       rule: "E-App",
       formula: "ρ ⊢ e₁ ⇓ ⟨x,τ,span,ρ'⟩",
-      description:
-        "the function position evaluates to a closure (a value)",
+      description: "the function position evaluates to a closure (a value)",
     },
   )
   @ensures(
