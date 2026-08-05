@@ -56,15 +56,20 @@ export class Var {
  *  Terms
  * ====================================================================== */
 
+/** Any value that can appear in the unification system. */
+export type LogicValue = Var | Term | string | number | boolean;
+
 /**
  * A compound term — a tagged structure with zero or more arguments,
  * like a Prolog functor. Unified structurally: two terms unify iff they
  * have the same tag and the same number of args, and each pair of args
- * unifies.
+ * unifies. Arguments may be `Term`s, `Var`s, or primitives — so logic
+ * variables can appear inside compound terms (e.g. `term("→", x, y)`
+ * where `x` and `y` are `Var`s).
  *
  * @example
  * ```ts
- * const arrow = (dom: Term, cod: Term): Term => term("→", dom, cod);
+ * const arrow = (dom: LogicValue, cod: LogicValue): Term => term("→", dom, cod);
  * const int = term("Int");
  * const bool = term("Bool");
  * // arrow(int, bool)  →  term("→", term("Int"), term("Bool"))
@@ -74,8 +79,8 @@ export class Term {
   /** The functor tag, e.g. `"→"`, `"Int"`, `"Bool"`. */
   readonly tag: string;
   /** The arguments (zero for atoms represented as terms). */
-  readonly args: readonly Term[];
-  constructor(tag: string, ...args: Term[]) {
+  readonly args: readonly LogicValue[];
+  constructor(tag: string, ...args: LogicValue[]) {
     this.tag = tag;
     this.args = args;
   }
@@ -85,9 +90,6 @@ export class Term {
       : `${this.tag}(${this.args.map((a) => a.toString()).join(", ")})`;
   }
 }
-
-/** Any value that can appear in the unification system. */
-export type LogicValue = Var | Term | string | number | boolean;
 
 /* ======================================================================
  *  Substitution
@@ -201,8 +203,8 @@ export function* unify(
 
 /** Unify two arrays of arguments pairwise. */
 function* unifyArgs(
-  us: readonly Term[],
-  vs: readonly Term[],
+  us: readonly LogicValue[],
+  vs: readonly LogicValue[],
   s: Substitution,
 ): Generator<Substitution> {
   if (us.length === 0) {
@@ -349,7 +351,7 @@ export function atom(tag: string): Term {
 }
 
 /** Construct a compound term with the given tag and args. */
-export function term(tag: string, ...args: Term[]): Term {
+export function term(tag: string, ...args: LogicValue[]): Term {
   return new Term(tag, ...args);
 }
 
