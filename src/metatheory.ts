@@ -259,16 +259,6 @@ export function checkProgress(
     }
   }
 
-  // If there are no value-rules at all, Progress cannot hold (nothing is a
-  // normal form, so evaluation never terminates).
-  if (valueRules.length === 0 && stepRules.length > 0) {
-    gaps.push({
-      rule: "(all)",
-      explanation:
-        "no value-rules found — every term can step, so evaluation never terminates (Progress holds vacuously but termination fails)",
-    });
-  }
-
   return {
     holds: gaps.length === 0,
     rules: classified,
