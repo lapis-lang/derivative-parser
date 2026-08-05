@@ -30,6 +30,7 @@ import {
   type RuleClause,
 } from "./rules.ts";
 import { collectMetadata } from "./contracts.ts";
+import { clauseTypeTokens } from "./unify.ts";
 
 /* ======================================================================
  *  Types
@@ -221,24 +222,25 @@ export function checkProgress(
     }
   }
 
-  // Constructor coverage: enumerate all @rule productions from the grammar
-  // class's metadata and check that each *semantic* production (one linked
-  // to a dynamic-semantics rule) is either a value-rule or covered by a
-  // step-rule. Productions not linked to any E-* rule are infrastructure
-  // (syntax, types, whitespace) and are excluded from the Progress check.
+  // Constructor coverage: for Progress to hold, every semantic production
+  // (one linked to a dynamic-semantics rule) must be either a value-rule
+  // (produces a normal form) or covered by a step-rule (can transition).
+  // Infrastructure productions (syntax, types, whitespace) that are not
+  // linked to any E-* rule are excluded — they don't produce terms.
   if (grammarClass) {
     const meta = collectMetadata(grammarClass);
-    // Collect all productions linked to any dynamic-semantics rule.
+    // Build the set of productions linked to dynamic-semantics rules.
+    // Only these are "semantic" — they produce terms that must progress.
     const semanticProductions = new Set<string>();
     for (const c of classified) {
       if (c.rule.production) semanticProductions.add(c.rule.production);
       for (const m of c.rule.methods) semanticProductions.add(String(m));
     }
+    // Check each semantic production: is it a value-rule or step-rule?
     for (const [key, methodReport] of Object.entries(meta.methods)) {
       if (!methodReport.isRule) continue;
       const prodName = key;
-      // Only check productions that are linked to a dynamic-semantics rule.
-      if (!semanticProductions.has(prodName)) continue;
+      if (!semanticProductions.has(prodName)) continue; // infrastructure
       const isValue = valueProductions.has(prodName);
       const canStep = stepProductions.has(prodName);
       if (!isValue && !canStep) {
@@ -273,21 +275,13 @@ export function checkProgress(
  * ====================================================================== */
 
 /**
- * Extract a type annotation from a clause's formula or metadata. Looks for
- * a `meta.type` key, then for a `: τ` pattern in the formula string.
- * Returns `undefined` if no type is discoverable.
+ * Extract a type annotation from a clause's formula or metadata. Delegates
+ * to {@link clauseTypeTokens} (from `unify.ts`) and returns the first token,
+ * or `undefined` if no types are discoverable.
  */
 function clauseType(clause: RuleClause): string | undefined {
-  const metaType = clause.meta?.type;
-  if (typeof metaType === "string") return metaType;
-  // Try to extract a type after the last `:` in the formula.
-  const formula = clause.formula;
-  if (!formula) return undefined;
-  const colonIdx = formula.lastIndexOf(":");
-  if (colonIdx >= 0) {
-    return formula.slice(colonIdx + 1).trim();
-  }
-  return undefined;
+  const tokens = clauseTypeTokens(clause);
+  return tokens?.[0];
 }
 
 /**

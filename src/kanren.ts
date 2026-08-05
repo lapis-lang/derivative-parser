@@ -239,16 +239,19 @@ export function eq(u: LogicValue, v: LogicValue): Goal {
  * Introduce a fresh logic variable. The callback receives the new
  * variable and returns a goal that may use it. This is `call/fresh` in
  * microKanren, `fresh` in miniKanren.
+ *
+ * Variable IDs are assigned from a module-level monotonic counter, so
+ * IDs are deterministic within a single process run (no `Math.random`).
  */
+let varCounter = 0;
+
 export function fresh(f: (x: Var) => Goal): Goal;
 export function fresh(f: (x: Var, y: Var) => Goal): Goal;
 export function fresh(f: (x: Var, y: Var, z: Var) => Goal): Goal;
 export function fresh(f: (...vars: Var[]) => Goal): Goal {
   return function* (s: Substitution): Generator<Substitution> {
-    // Generate fresh variables. We use a counter derived from the
-    // substitution's size — simple and sufficient for our use case
-    // (we don't need globally unique ids across independent runs).
-    const baseId = Math.floor(Math.random() * 1e9);
+    const baseId = varCounter;
+    varCounter += 3;
     const vars = [new Var(baseId), new Var(baseId + 1), new Var(baseId + 2)];
     yield* f(...vars)(s);
   };

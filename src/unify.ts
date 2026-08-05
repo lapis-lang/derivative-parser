@@ -34,11 +34,9 @@ import { collectRules } from "./rules.ts";
 import { classifyRules } from "./metatheory.ts";
 import type { PreservationResult, PreservationCheck } from "./metatheory.ts";
 import {
+  eq,
   parseType,
   runExists,
-  unify,
-  type LogicValue,
-  type Substitution,
 } from "./kanren.ts";
 
 /* ======================================================================
@@ -63,7 +61,7 @@ import {
  * @returns An array of type-token strings, or `undefined` if no types are
  *   discoverable.
  */
-function clauseTypeTokens(clause: RuleClause): string[] | undefined {
+export function clauseTypeTokens(clause: RuleClause): string[] | undefined {
   // 1. Explicit meta.type (string or array of strings).
   const metaType = clause.meta?.type;
   if (typeof metaType === "string") return [metaType];
@@ -143,7 +141,7 @@ function checkImplication(
 
   for (const premiseType of premiseTypes) {
     const premiseTerm = parseType(premiseType);
-    if (runExists(unifyGoal(conclusionTerm, premiseTerm))) {
+    if (runExists(eq(conclusionTerm, premiseTerm))) {
       return {
         valid: true,
         explanation:
@@ -156,13 +154,6 @@ function checkImplication(
     valid: false,
     explanation:
       `conclusion type "${conclusionTypes[0]}" does not unify with any premise type [${premiseTypes.join(", ")}]`,
-  };
-}
-
-/** Wrap `unify` as a goal for `runExists`. */
-function unifyGoal(u: LogicValue, v: LogicValue) {
-  return function* (s: Substitution): Generator<Substitution> {
-    yield* unify(u, v, s);
   };
 }
 

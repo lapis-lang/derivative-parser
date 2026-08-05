@@ -63,8 +63,8 @@ export interface CounterexampleResult {
 
 /**
  * Infer the type of an evaluated value, for the Preservation check. For
- * STLC-style evaluators, values are closures (type `TFun`), booleans (type
- * `Bool`), and numbers (type `Int`). This is a heuristic — grammars with
+ * STLC-style evaluators, values are closures (function type), booleans
+ * (`Bool`), and numbers (`Int`). This is a heuristic — grammars with
  * different value spaces may need to override this logic.
  *
  * @returns A string representation of the value's type, or `undefined` if
@@ -75,9 +75,13 @@ function inferValueType(value: unknown): string | undefined {
   if (typeof value === "number") return "Int";
   // Closures have a function type. We can't fully reconstruct the type
   // from the closure alone (we'd need the body's type), but we can identify
-  // it as a function type.
-  if (value !== null && typeof value === "object" &&
-    "param" in value && "type" in value && "bodySpan" in value) {
+  // it as a function type by checking for the `param` and `type` fields
+  // that `Closure` instances carry.
+  if (
+    value !== null && typeof value === "object" &&
+    "param" in value && "type" in value && "bodySpan" in value &&
+    "env" in value
+  ) {
     return "σ → τ";
   }
   return undefined;
@@ -92,14 +96,9 @@ function inferValueType(value: unknown): string | undefined {
  */
 function typeConsistent(valueType: string, sourceType: string): boolean {
   if (valueType === sourceType) return true;
-  // Both are function types — consistent (full comparison is the unification
-  // layer's job).
+  // Both are function types — consistent (full comparison is the
+  // unification layer's job).
   if (valueType.includes("→") && sourceType.includes("→")) return true;
-  if (valueType.includes("→") && sourceType.includes("→")) return true;
-  // Fall back to arrow-variant check
-  if (valueType.includes("→") || sourceType.includes("→")) {
-    return valueType.includes("→") && sourceType.includes("→");
-  }
   return false;
 }
 
