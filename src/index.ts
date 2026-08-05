@@ -126,12 +126,8 @@ export type {
 } from "./counterexamples.ts";
 
 /* ── SMT-based implication checking (z3-solver) ── */
-export {
-  checkImplication,
-  initZ3,
-  verifyPreservationSmt,
-} from "./smt.ts";
-export type { SmtResult, SmtStatus, Z3Api } from "./smt.ts";
+export { verifyPreservationSmt } from "./smt.ts";
+export type { SmtResult, SmtStatus } from "./smt.ts";
 
 /* ── Top-down generation ── */
 export { DEFAULT_ALPHABET, GenerationError, Generator } from "./generate.ts";

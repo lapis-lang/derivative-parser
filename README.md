@@ -999,7 +999,7 @@ notation. The layout maps directly to the decorator metadata:
 
 ```text
 premise₁   premise₂   …        if ϕ
-────────────────────────────────  ruleName  (production)
+─────────────────────────────  ruleName  (production)
 conclusion                     provided ψ
 ```
 
@@ -1066,7 +1066,7 @@ conclusion):
 
 ```text
 premise₁   premise₂   …        if ϕ
-────────────────────────────────  ruleName
+─────────────────────────────  ruleName
 conclusion                     provided ψ
 ```
 
@@ -1096,13 +1096,13 @@ const report = STLCEval.metatheory;
 console.log(report.progress.holds);    // true
 console.log(report.preservation.holds); // true
 
-// SMT-backed Preservation (requires --allow-read for the z3 WASM):
-import { verifyPreservationSmt, initZ3, collectRules } from '../src/index.ts';
-await initZ3();
-const smtResult = await verifyPreservationSmt(collectRules(STLCTypeCheck));
+// SMT-backed Preservation (Z3 is initialised lazily; under Deno, pass
+// --allow-read so the Z3 WASM module can be loaded):
+import { verifyPreservationSmt } from '@lapis-lang/lang-forma';
+const smtResult = await verifyPreservationSmt(STLCTypeCheck);
 
 // Generative counterexample search:
-import { findCounterexamples } from '../src/index.ts';
+import { findCounterexamples } from '@lapis-lang/lang-forma';
 const ev = new STLCEval();
 const tc = new STLCTypeCheck();
 const search = findCounterexamples(ev, tc, { numRuns: 100, seed: 42 });

@@ -33,7 +33,8 @@
  * @module
  */
 
-import type { FormattedInferenceRule, RuleClause } from "./rules.ts";
+import type { RuleClause } from "./rules.ts";
+import { collectRules } from "./rules.ts";
 import { classifyRules } from "./metatheory.ts";
 import type { PreservationResult, PreservationCheck } from "./metatheory.ts";
 
@@ -280,12 +281,17 @@ export async function checkImplication(
  * implication checking. When the rules carry no type annotations, the SMT
  * check is vacuous and the result mirrors the static check.
  *
- * @param rules The dynamic-semantics inference rules.
+ * Z3 is initialised lazily on first call — the caller does not need to
+ * manage the Z3 lifecycle. Under Deno, the Z3 WASM module requires
+ * `--allow-read` permission (or `--allow-all`) to load the WASM artifact.
+ *
+ * @param grammarClass The grammar class (e.g. `STLCTypeCheck`).
  * @returns The SMT-backed Preservation check result.
  */
 export async function verifyPreservationSmt(
-  rules: readonly FormattedInferenceRule[],
+  grammarClass: abstract new (...args: unknown[]) => unknown,
 ): Promise<PreservationResult> {
+  const rules = collectRules(grammarClass);
   const classified = classifyRules(rules);
   const stepRules = classified.filter((c) => c.kind === "step");
 

@@ -12,7 +12,6 @@
 import {
   collectRules,
   findCounterexamples,
-  initZ3,
   verifyPreservationSmt,
 } from "../src/index.ts";
 import { STLCEval, STLCTypeCheck } from "./stlc.ts";
@@ -55,18 +54,15 @@ if (report.progress.gaps.length > 0) {
 
 console.log("\n-- Phase 2: SMT Implication Checking (verifyPreservationSmt) --\n");
 
-await initZ3();
-
-const tcRules = collectRules(STLCTypeCheck);
 console.log("  STLCTypeCheck (T-* typing rules):");
-const tcResult = await verifyPreservationSmt(tcRules);
+const tcResult = await verifyPreservationSmt(STLCTypeCheck);
 for (const c of tcResult.checks) {
   console.log(
     `    ${c.rule}: ${c.preserves ? "✓" : "✗"} — ${c.explanation}`,
   );
 }
 
-const evResult = await verifyPreservationSmt(evalRules);
+const evResult = await verifyPreservationSmt(STLCEval);
 console.log("\n  STLCEval (E-* step rules):");
 for (const c of evResult.checks) {
   console.log(

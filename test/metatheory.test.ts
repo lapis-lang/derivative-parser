@@ -10,13 +10,11 @@
 
 import { assert, assertEquals, assertExists, assertFalse } from "@std/assert";
 import {
-  checkImplication,
   checkPreservation,
   checkProgress,
   classifyRules,
   collectRules,
   findCounterexamples,
-  initZ3,
   verifyMetatheory,
   verifyPreservationSmt,
 } from "../src/index.ts";
@@ -126,32 +124,14 @@ Deno.test("Phase 1 — Progress gap detected for rule with no conclusion", () =>
 
 /* ── Phase 2: SMT-based implication checking ───────────────────────── */
 
-Deno.test("Phase 2 — initZ3 returns a Z3 API", async () => {
-  const api = await initZ3();
-  assertExists(api.Context);
-});
-
-Deno.test("Phase 2 — checkImplication valid for matching types", async () => {
-  await initZ3();
-  const rules = collectRules(STLCTypeCheck);
-  const tApp = rules.find((r) => r.name === "T-App")!;
-  const result = await checkImplication(tApp.premises, tApp.conclusion[0]!);
-  // T-App: premise mentions σ and τ; conclusion is τ. τ ∈ {σ, τ} → valid.
-  assertEquals(result.status, "valid");
-});
-
 Deno.test("Phase 2 — verifyPreservationSmt on STLCEval (vacuous)", async () => {
-  await initZ3();
-  const rules = collectRules(STLCEval);
-  const result = await verifyPreservationSmt(rules);
+  const result = await verifyPreservationSmt(STLCEval);
   // E-* rules have no type annotations → vacuous → treated as passing.
   assert(result.holds);
 });
 
 Deno.test("Phase 2 — verifyPreservationSmt on STLCTypeCheck", async () => {
-  await initZ3();
-  const rules = collectRules(STLCTypeCheck);
-  const result = await verifyPreservationSmt(rules);
+  const result = await verifyPreservationSmt(STLCTypeCheck);
   // T-App passes (τ ∈ {σ, τ}); T-Var has no conclusion → fails.
   const tAppCheck = result.checks.find((c) => c.rule === "T-App");
   assertExists(tAppCheck);
