@@ -26,6 +26,8 @@
 
 import {
   collectRules,
+  classifyRules,
+  type ClassifiedRule,
   type FormattedInferenceRule,
   type RuleClause,
 } from "./rules.ts";
@@ -35,22 +37,6 @@ import { clauseTypeTokens, verifyPreservation } from "./unify.ts";
 /* ======================================================================
  *  Types
  * ====================================================================== */
-
-/** The kind of a dynamic-semantics rule, for Progress partitioning. */
-export type RuleKind = "value" | "step";
-
-/**
- * The result of classifying a single {@link InferenceRule} as a value-rule
- * (normal form) or a step-rule (transition).
- */
-export interface ClassifiedRule {
-  /** The classified rule. */
-  rule: FormattedInferenceRule;
-  /** The classification. */
-  kind: RuleKind;
-  /** The reason for the classification (human-readable). */
-  reason: string;
-}
 
 /** The result of the Progress check. */
 export interface ProgressResult {
@@ -108,60 +94,6 @@ export interface MetatheoryReport {
   preservation: PreservationResult;
   /** `true` if both Progress and Preservation hold. */
   holds: boolean;
-}
-
-/* ======================================================================
- *  Rule classification
- * ====================================================================== */
-
-/**
- * Classify a dynamic-semantics rule as a value-rule (normal form) or a
- * step-rule (transition).
- *
- * Heuristics (applied in order):
- * 1. **Explicit metadata**: if the rule's `meta.kind` is `"value"` or
- *    `"step"`, use it directly. This lets grammar authors override the
- *    heuristics for ambiguous cases.
- * 2. **Premise count**: a rule with **no premises** is a value-rule (an
- *    axiom that a constructor is a normal form, e.g. `E-Abs`, `E-Int`).
- *    A rule **with premises** is a step-rule (a transition, e.g. `E-App`,
- *    `E-Var`).
- * 3. **Name convention**: rules named `E-*` with a conclusion formula
- *    of the form `x ⇓ x` (reflexive) are value-rules.
- */
-export function classifyRule(rule: FormattedInferenceRule): ClassifiedRule {
-  // 1. Explicit metadata override.
-  const explicit = rule.meta?.kind;
-  if (explicit === "value") {
-    return { rule, kind: "value", reason: 'meta.kind === "value"' };
-  }
-  if (explicit === "step") {
-    return { rule, kind: "step", reason: 'meta.kind === "step"' };
-  }
-
-  // 2. Premise count: no premises → value-rule; premises → step-rule.
-  if (rule.premises.length === 0) {
-    return {
-      rule,
-      kind: "value",
-      reason: "no premises (axiom: constructor is a normal form)",
-    };
-  }
-  return {
-    rule,
-    kind: "step",
-    reason: `${rule.premises.length} premise(s) (transition)`,
-  };
-}
-
-/**
- * Partition dynamic-semantics rules into value-rules and step-rules.
- * Returns the classification for each rule.
- */
-export function classifyRules(
-  rules: readonly FormattedInferenceRule[],
-): ClassifiedRule[] {
-  return rules.map(classifyRule);
 }
 
 /* ======================================================================

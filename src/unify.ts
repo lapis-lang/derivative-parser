@@ -30,8 +30,7 @@
  */
 
 import type { RuleClause } from "./rules.ts";
-import { collectRules } from "./rules.ts";
-import { classifyRules } from "./metatheory.ts";
+import { collectRules, classifyRules } from "./rules.ts";
 import type { PreservationResult, PreservationCheck } from "./metatheory.ts";
 import {
   eq,

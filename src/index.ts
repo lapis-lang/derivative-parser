@@ -91,11 +91,13 @@ export {
 export type { DerivationRecord } from "./derivation.ts";
 
 /* ── First-class inference rules ── */
-export { collectRules, formatRule } from "./rules.ts";
+export { collectRules, formatRule, classifyRule, classifyRules } from "./rules.ts";
 export type {
+  ClassifiedRule,
   FormattedInferenceRule,
   InferenceRule,
   RuleClause,
+  RuleKind,
   RuleRole,
 } from "./rules.ts";
 
@@ -103,18 +105,14 @@ export type {
 export {
   checkPreservation,
   checkProgress,
-  classifyRule,
-  classifyRules,
   verifyMetatheory,
 } from "./metatheory.ts";
 export type {
-  ClassifiedRule,
   MetatheoryReport,
   PreservationCheck,
   PreservationResult,
   ProgressGap,
   ProgressResult,
-  RuleKind,
 } from "./metatheory.ts";
 
 /* ── Generative counterexample search ── */
