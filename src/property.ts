@@ -60,7 +60,9 @@ export interface ValueGenerator<T> {
  */
 export class GrammarGenerator<T, S extends GrammarShape = GrammarShape>
   implements ValueGenerator<T> {
+  /** The grammar's start production accessor. */
   private readonly startRule: () => ReturnType<Grammar<S>["start"]>;
+  /** Resolved generation options (all fields filled from defaults). */
   private readonly baseOpts: Required<GeneratorOptions>;
 
   constructor(
@@ -78,6 +80,7 @@ export class GrammarGenerator<T, S extends GrammarShape = GrammarShape>
     };
   }
 
+  /** Generate one sample value from a seed. */
   sample(seed: number): T {
     const result = new Generator({ ...this.baseOpts, seed }).generate(
       this.startRule() as unknown as ReturnType<Grammar<S>["start"]>,
@@ -235,6 +238,7 @@ export class PropertyFailure extends Error {
     this.name = "PropertyFailure";
   }
 
+  /** Format a counterexample value for display in the error message. */
   private static format(value: unknown): string {
     if (typeof value === "string") return JSON.stringify(value);
     if (

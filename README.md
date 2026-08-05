@@ -959,8 +959,8 @@ const { value } = g.generateFrom('term', [], { seed: 0, maxDepth: 3 });
 
 `Grammar.unparse(tree)` converts a `DerivationTree` back to source text. The
 default `UnparsePass` reconstructs from spans (zero-config); for
-pretty-printing, subclass `SemanticPass<string>` and override methods named
-after production labels:
+pretty-printing, subclass `SemanticPass<Record<string, string>>` and override
+methods named after production labels:
 
 ```ts
 const { trees } = g.parseToTree('1+2*3');

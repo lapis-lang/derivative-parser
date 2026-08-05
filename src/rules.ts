@@ -284,7 +284,9 @@ export function collectRules(
     if (rule.meta === undefined) rule.meta = clause.meta;
   }
 
-  for (const [key, methodReport] of Object.entries(report.methods)) {
+  for (const key of Reflect.ownKeys(report.methods)) {
+    const methodReport = report.methods[key as PropertyKey];
+    if (!methodReport) continue;
     // Link @rule production metadata: if a @rule(meta) carries a `rule` key
     // matching an inference rule, record the production method name. This
     // connects e.g. `@rule({ rule: "T-App", production: "appProd" })` to the
@@ -299,21 +301,21 @@ export function collectRules(
           // fall back to the @rule method's own name (the key) if absent.
           rule.production = typeof prodMeta.production === "string"
             ? prodMeta.production
-            : key;
+            : String(key);
         }
       }
     }
     // @requires → premises (or side conditions)
     for (const req of methodReport.requires) {
       if (!hasRuleName(req.meta)) continue; // not an inference-rule clause
-      const clause = clauseFromRequires(req, key);
+      const clause = clauseFromRequires(req, key as PropertyKey);
       const rule = ensureRule(clause.rule);
       addClause(rule, clause);
     }
     // @ensures → conclusion (or frame conditions)
     for (const ens of methodReport.ensures) {
       if (!hasRuleName(ens.meta)) continue; // not an inference-rule clause
-      const clause = clauseFromEnsures(ens, key);
+      const clause = clauseFromEnsures(ens, key as PropertyKey);
       const rule = ensureRule(clause.rule);
       addClause(rule, clause);
     }

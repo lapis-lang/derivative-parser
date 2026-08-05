@@ -259,6 +259,7 @@ class Backtrack extends Error {
  * enclosing `AltExp` (or fails the whole generation if at the top level).
  */
 export class Generator {
+  /** Resolved generation options (all fields filled from defaults). */
   private readonly opts: Required<GeneratorOptions>;
 
   constructor(options: GeneratorOptions = {}) {
@@ -308,6 +309,7 @@ export class Generator {
 
   /* ── Exp walker ──────────────────────────────────────────────────── */
 
+  /** Dispatch an `Exp` node to the appropriate generation handler. */
   private walk(exp: Exp, state: GenState): unknown {
     // Step cap — prevents infinite loops in grammars with unbounded recursive
     // lexemes (e.g. `digits()` creates a fresh DelayedExp per call).
@@ -387,6 +389,7 @@ export class Generator {
 
   /* ── AltExp: branch selection with backtracking ─────────────────── */
 
+  /** Select a branch from an `AltExp`, trying each in order with backtracking. */
   private walkAlt(exp: AltExp, state: GenState): unknown {
     // Filter branches by feasibility (depth & recursion budget).
     const feasible = exp.children.filter((c) => this.isFeasible(c, state));
@@ -426,6 +429,7 @@ export class Generator {
 
   /* ── SeqExp: ordered children ────────────────────────────────────── */
 
+  /** Generate each child of a `SeqExp` in order, then apply the sequence's semantic function. */
   private walkSeq(exp: SeqExp, state: GenState): unknown {
     // Fold over children left-to-right, collecting generated values.
     return exp.fn(exp.children.map((c) => this.walk(c, state)));
@@ -433,6 +437,7 @@ export class Generator {
 
   /* ── DelayedExp: force, recursion-track, derivation label ────────── */
 
+  /** Force a `DelayedExp`, track recursion depth, and record a derivation node if labeled. */
   private walkDelayed(exp: DelayedExp, state: GenState): unknown {
     // Recursion budget check.
     const count = state.recursionCounts.get(exp) ?? 0;
@@ -472,6 +477,7 @@ export class Generator {
 
   /* ── ChainExp: L-attributed bind ─────────────────────────────────── */
 
+  /** Generate the first parser, call `fn` to get the second, then generate it (L-attributed bind). */
   private walkChain(exp: ChainExp, state: GenState): unknown {
     const firstVal = this.walk(exp.first, state);
     let second: Exp;
@@ -539,6 +545,7 @@ export class Generator {
 
   /* ── Snapshot/restore for backtracking ───────────────────────────── */
 
+  /** Capture the current mutable state for backtracking. */
   private snapshot(state: GenState): {
     tokens: number;
     records: number;
@@ -559,6 +566,7 @@ export class Generator {
     };
   }
 
+  /** Restore mutable state from a snapshot after a failed branch. */
   private restore(
     state: GenState,
     snap: ReturnType<typeof this.snapshot>,
@@ -637,6 +645,7 @@ export class Generator {
     return children;
   }
 
+  /** Build a `DerivationTree` from the accumulated generation records. */
   private buildTree(state: GenState): DerivationTree {
     const source = state.tokens.map((t) => t.sym).join("");
     const synthetic = () =>
