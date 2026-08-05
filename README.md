@@ -1028,7 +1028,7 @@ The engine has three layers:
    type-equality constraints from rule metadata and asks Z3 whether the
    premises imply the conclusion.
 3. **Generative counterexample search** (`findCounterexamples`): uses the
-   #35 generator to synthesize well-formed terms and check Progress and
+   grammar generator to synthesize well-formed terms and check Progress and
    Preservation dynamically, shrinking any counterexample to a minimal form.
 
 ### Annotating dynamic semantics
