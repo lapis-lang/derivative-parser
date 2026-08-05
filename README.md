@@ -1033,42 +1033,19 @@ LangForma can verify metatheoretic properties of a grammar's semantics —
 **Progress** and **Preservation** (Subject Reduction) — by analyzing the
 grammar class itself, without requiring manual proof-assistant code (Coq/Lean).
 
-The engine has three layers:
-
-1. **Static analysis** (`Grammar.metatheory`): pure analysis over the
-   first-class `InferenceRule[]` model. Partitions dynamic-semantics rules
-   into value-rules (normal forms) and step-rules (transitions), then checks
-   Progress (exhaustiveness) and Preservation (type consistency)
-   syntactically.
-2. **Unification-based implication checking** (`verifyPreservation`): strengthens
-   Preservation with yield-kanren unification. Parses type tokens from rule
-   metadata into terms, then checks whether the conclusion's type unifies
-   with any premise's type. Pure TypeScript — no external dependencies.
-3. **Generative counterexample search** (`findCounterexamples`): uses the
-   grammar generator to synthesize well-formed terms and check Progress and
-   Preservation dynamically, shrinking any counterexample to a minimal form.
+The engine combines static rule-structure analysis, unification-based type
+checking (via a built-in yield-kanren engine), and generative counterexample
+search. See the companion article for the theoretical background.
 
 ### Annotating dynamic semantics
 
 To verify Progress and Preservation, the dynamic-semantics rules (evaluation
 judgments `ρ ⊢ e ⇓ v`) must be annotated with `@requires`/`@ensures` metadata
-following the `rule`/`formula` convention, just like the static
-semantics. The optional `role` key distinguishes **side conditions**
-(`@requires` with `role: "side"` — constraints that are not judgments
-about sub-terms, e.g. `τ₁ = Bool`) and **frame conditions** (`@ensures`
-with `role: "frame"` — what the rule preserves, e.g. the store is
-unchanged except for `x`). When `role` is omitted, `@requires` defaults to
-`"premise"` and `@ensures` defaults to `"conclusion"` — so the common
-case needs no `role` key. In `format()` output, side conditions appear as
-`if ϕ` above the bar (right-aligned beyond the premises) and frame
-conditions as `provided ψ` below the bar (right-aligned beyond the
-conclusion):
-
-```text
-premise₁   premise₂   …        if ϕ
-─────────────────────────────  ruleName
-conclusion                     provided ψ
-```
+following the `rule`/`formula` convention, just like the static semantics.
+The optional `role` key distinguishes **side conditions** (`@requires` with
+`role: "side"`) and **frame conditions** (`@ensures` with `role: "frame"`).
+When `role` is omitted, `@requires` defaults to `"premise"` and `@ensures`
+defaults to `"conclusion"`:
 
 ```ts
 @requires(
@@ -1082,23 +1059,19 @@ conclusion                     provided ψ
 protected override app(fn: Value, arg: Value): Value { ... }
 ```
 
-Rules with no premises are classified as **value-rules** (normal forms);
-rules with premises are **step-rules** (transitions). The `meta.kind` key
-can override this heuristic.
-
 ### Verifying a grammar
 
 ```ts
 import { STLCEval, STLCTypeCheck } from './examples/stlc.ts';
 
-// Static analysis (no SMT, no generation):
+// Static analysis (Progress + Preservation):
 const report = STLCEval.metatheory;
 console.log(report.progress.holds);    // true
 console.log(report.preservation.holds); // true
 
-// Unification-backed Preservation (pure TypeScript, no external deps):
+// Unification-backed Preservation (strengthens the static check):
 import { verifyPreservation } from '@lapis-lang/lang-forma';
-const unifyResult = verifyPreservation(STLCTypeCheck);
+const result = verifyPreservation(STLCTypeCheck);
 
 // Generative counterexample search:
 import { findCounterexamples } from '@lapis-lang/lang-forma';
