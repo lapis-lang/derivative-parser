@@ -553,16 +553,16 @@ specific use case.
 ```ts
 import { requires, ensures } from '@lapis-lang/lang-forma';
 
-// The second argument is an arbitrary object — these keys (rule, role,
+// The second argument is an arbitrary object — these keys (rule,
 // formula) are this author's choice; a JSON/CSV grammar could use entirely
 // different keys. The library stores and round-trips it opaquely.
 @requires(
     (_self, fn, arg) => fn instanceof TFun && typeEq(fn.dom, arg),
-    { rule: 'T-App', role: 'premise', formula: 'fn : σ → τ  ∧  arg <: σ' },
+    { rule: 'T-App', formula: 'fn : σ → τ  ∧  arg <: σ' },
 )
 @ensures(
     (_self, _args, _old, result) => result instanceof TVar || result instanceof TFun,
-    { rule: 'T-App', role: 'conclusion', formula: 'result : τ' },
+    { rule: 'T-App', formula: 'result : τ' },
 )
 protected app(fn: Type, _arg: Type): Type { return (fn as TFun).cod; }
 ```
@@ -584,7 +584,7 @@ predicate and the declarative metadata for each contract:
 import { STLCTypeCheck } from './stlc.ts';
 
 const report = STLCTypeCheck.metadata;
-// report.methods.app.requires[0].meta  → { rule: 'T-App', role: 'premise', formula: '...' }
+// report.methods.app.requires[0].meta  → { rule: 'T-App', formula: '...' }
 // report.methods.app.requires[0].predicate  → the executable (self, fn, arg) => boolean
 
 // Invoke a predicate reflectively (pass the instance as `self`):
@@ -995,9 +995,26 @@ tApp.production;  // "appProd"
 ```
 
 Each rule has a `format()` method that renders it in standard proof-tree
-notation — premises above the bar, conclusion below, with the rule name
-labeling the line. Conjoined premises (`∧`) are split into the traditional
-horizontal spacing:
+notation. The layout maps directly to the decorator metadata:
+
+```text
+premise₁   premise₂   …        if ϕ
+─────────────────────────────  ruleName  (production)
+conclusion                     provided ψ
+```
+
+| Position | Decorator | `role` (default) | `role` (override) |
+|---|---|---|---|
+| Above the bar | `@requires` | `"premise"` (omitted) | `"side"` → `if ϕ` |
+| Rule-name line | `@rule({ rule, production })` | — | — |
+| Below the bar | `@ensures` | `"conclusion"` (omitted) | `"frame"` → `provided ψ` |
+
+Premises (`@requires`) appear above the bar; the conclusion (`@ensures`)
+appears below. The `@rule` metadata supplies the rule name and links the
+production. Side conditions (`@requires` with `role: "side"`) render as
+`if ϕ` right-aligned above the bar; frame conditions (`@ensures` with
+`role: "frame"`) render as `provided ψ` right-aligned below the bar.
+Conjoined premises (`∧`) are split into the traditional horizontal spacing:
 
 ```ts
 console.log(tApp.format());
@@ -1009,6 +1026,59 @@ console.log(tApp.format());
 This is an opt-in interpretive layer over the schema-less `ContractMeta` —
 grammars that don't follow the convention return an empty array. First-class
 rules enable type-directed generation and static metatheory analysis.
+
+## Metatheory Verification
+
+LangForma can verify metatheoretic properties of a grammar's semantics —
+**Progress** and **Preservation** (Subject Reduction) — by analyzing the
+grammar class itself, without requiring manual proof-assistant code (Coq/Lean).
+
+The engine combines static rule-structure analysis, unification-based type
+checking (via a built-in yield-kanren engine), and generative counterexample
+search. See the companion article for the theoretical background.
+
+### Annotating dynamic semantics
+
+To verify Progress and Preservation, the dynamic-semantics rules (evaluation
+judgments `ρ ⊢ e ⇓ v`) must be annotated with `@requires`/`@ensures` metadata
+following the `rule`/`formula` convention, just like the static semantics.
+The optional `role` key distinguishes **side conditions** (`@requires` with
+`role: "side"`) and **frame conditions** (`@ensures` with `role: "frame"`).
+When `role` is omitted, `@requires` defaults to `"premise"` and `@ensures`
+defaults to `"conclusion"`:
+
+```ts
+@requires(
+  (_self, fn, _arg) => fn instanceof Closure,
+  { rule: "E-App", formula: "ρ ⊢ e₁ ⇓ ⟨x,τ,span,ρ'⟩" },
+)
+@ensures(
+  (_self, _args, _old, result) => isValueOrPlaceholder(result),
+  { rule: "E-App", formula: "ρ ⊢ e₁ e₂ ⇓ v" },
+)
+protected override app(fn: Value, arg: Value): Value { ... }
+```
+
+### Verifying a grammar
+
+```ts
+import { STLCEval, STLCTypeCheck } from './examples/stlc.ts';
+
+// Static analysis + unification (Progress + Preservation):
+const report = STLCEval.metatheory;
+console.log(report.progress.holds);    // true
+console.log(report.preservation.holds); // true
+console.log(report.preservation.unification?.length); // 2
+
+// Generative counterexample search:
+import { findCounterexamples } from '@lapis-lang/lang-forma';
+const ev = new STLCEval();
+const tc = new STLCTypeCheck();
+const search = findCounterexamples(ev, tc, { numRuns: 100, seed: 42 });
+console.log(search.passed); // true
+```
+
+See [examples/stlc-metatheory-demo.ts](examples/stlc-metatheory-demo.ts) for a full demonstration.
 
 ## References
 
@@ -1023,6 +1093,11 @@ rules enable type-directed generation and static metatheory analysis.
 - [decorator-contracts](https://github.com/final-hill/decorator-contracts) — the inspiration for the grammar-native contracts system.
 - [Design by Contract](https://en.wikipedia.org/wiki/Design_by_contract),
   [Liskov Substitution Principle](https://en.wikipedia.org/wiki/Liskov_substitution_principle).
+- [microKanren (Hemann & Friedman, 2013)](https://github.com/jasonhemann/microKanren) —
+  the minimal relational programming core that inspired the yield-kanren engine.
+- [Yield Prolog](https://yieldprolog.sourceforge.net/) —
+  generator-based backtracking with `yield`/`for...of`, the synthesis insight
+  behind yield-kanren.
 
 ## License
 

@@ -12,6 +12,7 @@ import {
   wrapWithContracts,
 } from "./contracts.ts";
 import { collectRules, type FormattedInferenceRule } from "./rules.ts";
+import { type MetatheoryReport, verifyMetatheory } from "./metatheory.ts";
 import {
   GenerationError,
   Generator,
@@ -143,6 +144,31 @@ export abstract class Grammar<S extends GrammarShape = GrammarShape> {
    */
   static get rules(): FormattedInferenceRule[] {
     return collectRules(this);
+  }
+
+  /**
+   * Verify the metatheory (Progress + Preservation) of this grammar class's
+   * dynamic-semantics rules. Pure static analysis over the first-class
+   * {@link InferenceRule} model — no unification, no term generation.
+   *
+   * Progress checks constructor coverage: every `@rule` production is
+   * either a value-rule or covered by a step-rule. Preservation checks
+   * type consistency: each step-rule's conclusion type matches a premise
+   * type.
+   *
+   * For full Preservation cross-checking against the typing relation, call
+   * `verifyMetatheory(evalClass, typeCheckClass)` directly (the static
+   * getter only passes the dynamic class).
+   *
+   * See {@link ../metatheory.ts} for the full engine. Grammars that don't
+   * follow the inference-rule convention (no `meta.rule` annotations) return
+   * a vacuous report (Progress holds with no rules, Preservation holds with
+   * no checks).
+   *
+   * @returns The combined metatheory report.
+   */
+  static get metatheory(): MetatheoryReport {
+    return verifyMetatheory(this);
   }
 
   /* ---- sigspace ---- */

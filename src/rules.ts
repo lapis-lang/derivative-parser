@@ -93,13 +93,13 @@ export interface RuleClause {
 export interface InferenceRule {
   /** The rule name, e.g. `"T-App"` (from `meta.rule`). */
   name: string;
-  /** The premises (`@requires` contracts with `role: "premise"`). */
+  /** The premises (`@requires` contracts; `role` defaults to `"premise"`). */
   premises: RuleClause[];
-  /** The conclusion (`@ensures` contracts with `role: "conclusion"`). */
+  /** The conclusion (`@ensures` contracts; `role` defaults to `"conclusion"`). */
   conclusion: RuleClause[];
-  /** Side conditions (`@requires` contracts with `role: "side"`). */
+  /** Side conditions (`@requires` contracts with `role: "side"` — constraints that are not judgments about sub-terms). */
   sideConditions: RuleClause[];
-  /** Frame conditions (`@ensures` contracts with `role: "frame"`). */
+  /** Frame conditions (`@ensures` contracts with `role: "frame"` — what the rule preserves, e.g. unchanged state). */
   frameConditions: RuleClause[];
   /**
    * The semantic-action method name(s) that carry this rule's contracts.
@@ -333,16 +333,21 @@ export function collectRules(
  * notation:
  *
  * ```text
- * premise₁   premise₂   …   side-condition
+ * premise₁   premise₂   …        if ϕ
  * ─────────────────────────  ruleName
- * conclusion
+ * conclusion                     provided ψ
  * ```
  *
- * Premises and side conditions appear above the line; the rule name and
- * production (if any) label the line; the conclusion appears below. When
- * there are no premises, the line is drawn with nothing above it (an axiom).
+ * Premises appear above the line; the conclusion appears below. Side
+ * conditions (`if ϕ`) are placed above the bar, right-aligned beyond the
+ * premises; frame conditions (`provided ψ`) are placed below the bar,
+ * right-aligned beyond the conclusion. This keeps side conditions
+ * visually associated with premises and frame conditions with conclusions,
+ * while the `if`/`provided` prefixes distinguish them from actual
+ * judgments. The bar width is sized to the premises/conclusions only.
  *
- * The separator line is sized to the widest content above or below it.
+ * When there are no premises, the line is drawn with nothing above it
+ * (an axiom).
  *
  * @example
  * ```ts
@@ -354,37 +359,74 @@ export function collectRules(
  * ```
  */
 export function formatRule(rule: InferenceRule): string {
-  // Collect lines above the bar: premises (split on ∧ into spaced judgments)
-  // then side conditions. Below: conclusions then frame conditions.
   const clauseText = (c: RuleClause, fallback: string) =>
     c.formula ?? c.description ?? fallback;
-  const above = [
-    ...rule.premises.map((p) =>
-      clauseText(p, `[${rule.name} premise]`)
-        .split(/\s*∧\s*/).filter((s) => s.length > 0).join("    ")
-    ),
-    ...rule.sideConditions.map((s) => clauseText(s, `[${rule.name} side]`)),
-  ];
-  const below = [
-    ...rule.conclusion.map((c) => clauseText(c, `[${rule.name} conclusion]`)),
-    ...rule.frameConditions.map((f) => clauseText(f, `[${rule.name} frame]`)),
-  ];
 
-  // The bar: a line of ─ sized to the widest content, with the rule name
-  // (and production, if linked) appended as a right-aligned label.
+  // Premises above the bar (split on ∧ into spaced judgments).
+  const premises = rule.premises.map((p) =>
+    clauseText(p, `[${rule.name} premise]`)
+      .split(/\s*∧\s*/).filter((s) => s.length > 0).join("    ")
+  );
+  // Conclusions below the bar.
+  const conclusions = rule.conclusion.map((c) =>
+    clauseText(c, `[${rule.name} conclusion]`)
+  );
+
+  // Side conditions: "if ϕ" — placed above the bar, right-aligned.
+  const sideText = rule.sideConditions.length > 0
+    ? "if " + rule.sideConditions.map((s) => clauseText(s, "")).join(", ")
+    : "";
+  // Frame conditions: "provided ψ" — placed below the bar, right-aligned.
+  const frameText = rule.frameConditions.length > 0
+    ? "provided " +
+      rule.frameConditions.map((f) => clauseText(f, "")).join(", ")
+    : "";
+
+  // The bar width is determined by premises/conclusions only.
+  const contentWidth = Math.max(
+    0,
+    ...premises.map((l) => l.length),
+    ...conclusions.map((l) => l.length),
+  );
   const label = rule.production
     ? `${rule.name}  (${rule.production})`
     : rule.name;
-  const contentWidth = Math.max(
-    0,
-    ...above.map((l) => l.length),
-    ...below.map((l) => l.length),
-  );
   const barWidth = Math.max(
     contentWidth + 4,
     contentWidth - (label.length + 2) + 4,
   );
   const barLine = "\u2500".repeat(barWidth) + "  " + label;
+
+  // Build the above/below lines, appending side/frame text right-aligned
+  // beyond the bar width. The side/frame text appears once, on the first
+  // line (or on its own line if there are no premises/conclusions).
+  const padBeyond = (line: string, suffix: string): string => {
+    if (!suffix) return line;
+    const padding = Math.max(2, barWidth - line.length);
+    return line + " ".repeat(padding) + suffix;
+  };
+
+  // Above: premises, with side condition appended to the first line
+  // (or on its own line if there are no premises).
+  const above: string[] = [...premises];
+  if (sideText) {
+    if (above.length > 0) {
+      above[0] = padBeyond(above[0]!, sideText);
+    } else {
+      above.push(sideText);
+    }
+  }
+
+  // Below: conclusions, with frame condition appended to the first line
+  // (or on its own line if there are no conclusions).
+  const below: string[] = [...conclusions];
+  if (frameText) {
+    if (below.length > 0) {
+      below[0] = padBeyond(below[0]!, frameText);
+    } else {
+      below.push(frameText);
+    }
+  }
 
   return [above.join("\n"), barLine, below.join("\n")]
     .filter((s) => s.length > 0)
@@ -400,4 +442,72 @@ function attachFormat(rule: InferenceRule): FormattedInferenceRule {
   const formatted = rule as FormattedInferenceRule;
   formatted.format = () => formatRule(rule);
   return formatted;
+}
+
+/* ======================================================================
+ *  Rule classification
+ * ====================================================================== */
+
+/** The kind of a dynamic-semantics rule, for Progress partitioning. */
+export type RuleKind = "value" | "step";
+
+/**
+ * The result of classifying a single {@link InferenceRule} as a value-rule
+ * (normal form) or a step-rule (transition).
+ */
+export interface ClassifiedRule {
+  /** The classified rule. */
+  rule: FormattedInferenceRule;
+  /** The classification. */
+  kind: RuleKind;
+  /** The reason for the classification (human-readable). */
+  reason: string;
+}
+
+/**
+ * Classify a dynamic-semantics rule as a value-rule (normal form) or a
+ * step-rule (transition).
+ *
+ * Heuristics (applied in order):
+ * 1. **Explicit metadata**: if the rule's `meta.kind` is `"value"` or
+ *    `"step"`, use it directly. This lets grammar authors override the
+ *    heuristics for ambiguous cases.
+ * 2. **Premise count**: a rule with **no premises** is a value-rule (an
+ *    axiom that a constructor is a normal form, e.g. `E-Abs`, `E-Int`).
+ *    A rule **with premises** is a step-rule (a transition, e.g. `E-App`,
+ *    `E-Var`).
+ */
+export function classifyRule(rule: FormattedInferenceRule): ClassifiedRule {
+  // 1. Explicit metadata override.
+  const explicit = rule.meta?.kind;
+  if (explicit === "value") {
+    return { rule, kind: "value", reason: 'meta.kind === "value"' };
+  }
+  if (explicit === "step") {
+    return { rule, kind: "step", reason: 'meta.kind === "step"' };
+  }
+
+  // 2. Premise count: no premises → value-rule; premises → step-rule.
+  if (rule.premises.length === 0) {
+    return {
+      rule,
+      kind: "value",
+      reason: "no premises (axiom: constructor is a normal form)",
+    };
+  }
+  return {
+    rule,
+    kind: "step",
+    reason: `${rule.premises.length} premise(s) (transition)`,
+  };
+}
+
+/**
+ * Partition dynamic-semantics rules into value-rules and step-rules.
+ * Returns the classification for each rule.
+ */
+export function classifyRules(
+  rules: readonly FormattedInferenceRule[],
+): ClassifiedRule[] {
+  return rules.map(classifyRule);
 }

@@ -91,13 +91,62 @@ export {
 export type { DerivationRecord } from "./derivation.ts";
 
 /* ── First-class inference rules ── */
-export { collectRules, formatRule } from "./rules.ts";
+export {
+  classifyRule,
+  classifyRules,
+  collectRules,
+  formatRule,
+} from "./rules.ts";
 export type {
+  ClassifiedRule,
   FormattedInferenceRule,
   InferenceRule,
   RuleClause,
+  RuleKind,
   RuleRole,
 } from "./rules.ts";
+
+/* ── Metatheory verification ── */
+export {
+  checkPreservation,
+  checkProgress,
+  verifyMetatheory,
+} from "./metatheory.ts";
+export type {
+  MetatheoryReport,
+  PreservationCheck,
+  PreservationResult,
+  ProgressGap,
+  ProgressResult,
+} from "./metatheory.ts";
+
+/* ── Generative counterexample search ── */
+export { findCounterexamples } from "./counterexamples.ts";
+export type {
+  Counterexample,
+  CounterexampleOptions,
+  CounterexampleResult,
+} from "./counterexamples.ts";
+
+/* ── Yield-Kanren (relational unification engine) ── */
+export {
+  atom,
+  conj,
+  conjAll,
+  disj,
+  disjAll,
+  eq,
+  fresh,
+  parseType,
+  run,
+  runExists,
+  Substitution,
+  Term,
+  term,
+  unify,
+  Var,
+} from "./kanren.ts";
+export type { Goal, LogicValue } from "./kanren.ts";
 
 /* ── Top-down generation ── */
 export { DEFAULT_ALPHABET, GenerationError, Generator } from "./generate.ts";
