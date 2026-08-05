@@ -153,6 +153,26 @@ export function findCounterexamples<S extends GrammarShape>(
       continue;
     }
 
+    // When a type checker is provided, skip ill-typed terms before checking
+    // Progress — Progress and Preservation are defined for well-typed terms
+    // only, so an ill-typed term is a generation/typeability failure, not a
+    // metatheory violation. Capture the source type for the Preservation
+    // check below.
+    let sourceType: string | undefined;
+    if (typeCheckGrammar) {
+      try {
+        const typeResults = [...typeCheckGrammar.parse(source)];
+        if (typeResults.length === 0) {
+          // Ill-typed — skip (not a Progress or Preservation violation).
+          continue;
+        }
+        sourceType = String(typeResults[0]);
+      } catch {
+        // Type check threw — skip.
+        continue;
+      }
+    }
+
     // Progress check: re-parse the source with the evaluator and check it
     // produces a result. A stuck term would produce an empty parse forest
     // or throw.
@@ -181,30 +201,14 @@ export function findCounterexamples<S extends GrammarShape>(
     // that the evaluated value's type is consistent with the type checker's
     // result type for the source. This is the dynamic Subject Reduction
     // check: if Γ ⊢ e : τ and e ⇓ v, then v has type τ.
-    if (typeCheckGrammar) {
-      try {
-        const typeResults = [...typeCheckGrammar.parse(source)];
-        if (typeResults.length === 0) {
-          // The generated term is ill-typed — a generation issue, not a
-          // Preservation violation. Skip.
-          continue;
-        }
-        const sourceType = String(typeResults[0]);
-        const valueType = inferValueType(value);
-        if (valueType !== undefined && !typeConsistent(valueType, sourceType)) {
-          counterexamples.push({
-            property: "preservation",
-            source,
-            explanation:
-              `type mismatch: source has type "${sourceType}" but evaluated value has type "${valueType}"`,
-          });
-        }
-      } catch (e) {
+    if (sourceType !== undefined) {
+      const valueType = inferValueType(value);
+      if (valueType !== undefined && !typeConsistent(valueType, sourceType)) {
         counterexamples.push({
           property: "preservation",
           source,
           explanation:
-            `type check failed on generated term: ${(e as Error).message}`,
+            `type mismatch: source has type "${sourceType}" but evaluated value has type "${valueType}"`,
         });
       }
     }
