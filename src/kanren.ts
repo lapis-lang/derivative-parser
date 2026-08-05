@@ -102,7 +102,7 @@ export class Term {
  * Represented as a `Map` for O(1) lookup.
  */
 export class Substitution {
-/** The internal variable-to-value binding map. */
+  /** The internal variable-to-value binding map. */
   private readonly bindings: Map<Var, LogicValue>;
   private constructor(bindings: Map<Var, LogicValue>) {
     this.bindings = bindings;
