@@ -11,6 +11,15 @@ import {
   metaOn,
   wrapWithContracts,
 } from "./contracts.ts";
+import { collectRules, type FormattedInferenceRule } from "./rules.ts";
+import {
+  GenerationError,
+  Generator,
+  type GeneratorOptions,
+  type GeneratorResult,
+} from "./generate.ts";
+import { GrammarGenerator, type ValueGenerator } from "./property.ts";
+import { unparse as defaultUnparse } from "./unparse.ts";
 import {
   epsilon as epsilonFn,
   or as orFn,
@@ -121,6 +130,21 @@ export abstract class Grammar<S extends GrammarShape = GrammarShape> {
     return collectMetadata(this);
   }
 
+  /**
+   * First-class inference rules for this grammar class, walked across the
+   * whole inheritance chain. Groups `@requires`/`@ensures` contracts that
+   * follow the `meta.rule` convention into {@link InferenceRule} objects
+   * with premises and a conclusion. Grammars that don't use the convention
+   * return an empty array — the inference-rule model is fully opt-in.
+   *
+   * Because this is a *static* getter, the predicates in the rules are
+   * unbound — when invoking a predicate reflectively, pass the instance
+   * as the first (`self`) argument.
+   */
+  static get rules(): FormattedInferenceRule[] {
+    return collectRules(this);
+  }
+
   /* ---- sigspace ---- */
 
   /** The whitespace production used by {@link sseq}. Override to customise. */
@@ -197,6 +221,136 @@ export abstract class Grammar<S extends GrammarShape = GrammarShape> {
     return new ZipperDriver().recognize(
       this.start()._exp,
       this._toTokens(input),
+    );
+  }
+
+  /* ── Generation (top-down, the dual of parsing) ───────────────────── */
+  //
+  // Where parse() consumes tokens bottom-up, generate() walks the Exp tree
+  // top-down, emitting tokens and computing semantic values. This is L-system
+  // style expansion: starting from an initial production (axiom), the
+  // generator expands non-terminals until terminals are reached. See the
+  // README for the full discussion.
+
+  /**
+   * Generate a value top-down from the grammar's start production, emitting
+   * a token stream and building a derivation tree. The dual of {@link parse}:
+   * where parsing consumes tokens to build a value, generation walks the
+   * grammar's `Exp` tree top-down, choosing branches and emitting tokens.
+   *
+   * Throws {@link GenerationError} if no derivation completes within the
+   * depth/recursion budget.
+   *
+   * @param options Generation options (depth, recursion, seed, alphabet).
+   * @returns The generated value, token stream, and derivation tree.
+   */
+  generate(options?: GeneratorOptions): GeneratorResult<S[keyof S]> {
+    assertInvariants(this);
+    return new Generator(options).generate(this.start());
+  }
+
+  /**
+   * Build a {@link ValueGenerator} (with grammar-aware shrinking) rooted at
+   * the grammar's start production. The native property-testing adapter —
+   * pass to {@link forAll} to run property-based tests.
+   *
+   * @param options Generation options (depth, recursion, rng, alphabet).
+   * @returns A `ValueGenerator<S[keyof S]>` with `sample` and `shrink`.
+   */
+  toGenerator(options?: GeneratorOptions): ValueGenerator<S[keyof S]> {
+    assertInvariants(this);
+    return new GrammarGenerator<S[keyof S], S>(
+      this,
+      () => this.start(),
+      options,
+    );
+  }
+
+  /* ── Unparsing (inverse parsing) ──────────────────────────────────── */
+  //
+  // Convert a DerivationTree back into source text. The default UnparsePass
+  // reconstructs from spans (zero-config); grammar authors subclass
+  // SemanticPass<string> for pretty-printing. See src/unparse.ts.
+
+  /**
+   * Unparse a {@link DerivationTree} to a source string using the default
+   * {@link UnparsePass}. For pretty-printing, override with a
+   * `SemanticPass<string>` subclass.
+   *
+   * @param tree The derivation tree to unparse.
+   * @returns The reconstructed source string.
+   */
+  unparse(tree: DerivationTree): string {
+    return defaultUnparse(tree);
+  }
+
+  /**
+   * Generate a value top-down from a named `@rule` production, resolved
+   * reflectively. Supports parameterised (method) productions by passing
+   * `args`.
+   *
+   * @param ruleName  The `@rule` production name (getter or method).
+   * @param args      Arguments for a parameterised `@rule` method. Empty for
+   *                  a getter production.
+   * @param options   Generation options.
+   * @returns The generated value, token stream, and derivation tree.
+   */
+  generateFrom(
+    ruleName: string,
+    args: readonly unknown[] = [],
+    options?: GeneratorOptions,
+  ): GeneratorResult<unknown> {
+    assertInvariants(this);
+    const parser = this._resolveRule(ruleName, args);
+    return new Generator(options).generate(parser);
+  }
+
+  /**
+   * Resolve a `@rule` production by name reflectively, returning its
+   * `Parser`. Walks the prototype chain for a `@rule`-decorated method/getter
+   * with the given name. For a parameterised `@rule` method, calls it with
+   * `args`. Non-`@rule` methods (e.g. `parse`, `recognize`) are rejected.
+   *
+   * @internal Exposed for the generator; not part of the stable public API.
+   */
+  protected _resolveRule(
+    ruleName: string,
+    args: readonly unknown[] = [],
+  ): Parser<unknown> {
+    // Check the contract metadata to verify `ruleName` is a `@rule` production.
+    const meta = collectMetadata(this);
+    const methodReport = meta.methods[ruleName];
+    if (!methodReport?.isRule) {
+      // Collect available @rule names for a helpful error message.
+      const available = Object.entries(meta.methods)
+        .filter(([, r]) => r.isRule)
+        .map(([k]) => k);
+      throw new GenerationError(
+        `generateFrom: "${ruleName}" is not a @rule production on ${this.constructor.name}.` +
+          (available.length > 0
+            ? ` Available @rule productions: ${available.join(", ")}.`
+            : " No @rule productions found."),
+      );
+    }
+    // Walk the prototype chain for the property named `ruleName`.
+    let proto: object | null = Object.getPrototypeOf(this);
+    while (proto && proto !== Object.prototype) {
+      const desc = Object.getOwnPropertyDescriptor(proto, ruleName);
+      if (desc) {
+        if (typeof desc.get === "function") {
+          // Getter production — call on `this`.
+          return desc.get.call(this) as Parser<unknown>;
+        }
+        if (typeof desc.value === "function") {
+          // Method production — call with args.
+          return (desc.value as (...a: unknown[]) => Parser<unknown>)
+            .apply(this, args as unknown[]);
+        }
+      }
+      proto = Object.getPrototypeOf(proto);
+    }
+    throw new GenerationError(
+      `generateFrom: @rule production "${ruleName}" is registered in metadata but not found on the prototype chain of ${this.constructor.name}.`,
     );
   }
 

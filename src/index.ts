@@ -89,3 +89,31 @@ export {
   SemanticPass,
 } from "./derivation.ts";
 export type { DerivationRecord } from "./derivation.ts";
+
+/* ── First-class inference rules ── */
+export { collectRules, formatRule } from "./rules.ts";
+export type {
+  FormattedInferenceRule,
+  InferenceRule,
+  RuleClause,
+  RuleRole,
+} from "./rules.ts";
+
+/* ── Top-down generation ── */
+export { DEFAULT_ALPHABET, GenerationError, Generator } from "./generate.ts";
+export type {
+  BranchStrategy,
+  GeneratorOptions,
+  GeneratorResult,
+} from "./generate.ts";
+
+/* ── Native property-based testing ── */
+export { GrammarGenerator, PropertyFailure } from "./property.ts";
+export type {
+  ForAllOptions,
+  ForAllResult,
+  ValueGenerator,
+} from "./property.ts";
+
+/* ── Unparsing (inverse parsing) ── */
+export { unparse, UnparsePass } from "./unparse.ts";

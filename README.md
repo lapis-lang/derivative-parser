@@ -916,6 +916,100 @@ See [examples/multipass-demo.ts](examples/multipass-demo.ts) for a working
 multi-pass example: parse once, then run multiple semantic passes over the
 shared derivation tree.
 
+## Program generation & unparsing (the dual of parsing)
+
+Where `parse()` consumes tokens bottom-up to build values, `generate()` walks
+the grammar's `Exp` tree **top-down**, emitting tokens and computing semantic
+values. This is L-system style expansion: starting from an initial production
+(axiom), the generator expands non-terminals until terminals are reached.
+
+```ts
+const g = new MathEval();
+const { value, tokens, tree } = g.generate({
+  seed: 42,
+  maxDepth: 4,
+});
+const src = tokens.map(t => t.sym).join('');  // e.g. "3*2"
+// Round-trip: parse the generated source
+[...g.parse(src)];  // → [6]
+```
+
+### Generator options
+
+| Option | Default | Description |
+|---|---|---|
+| `maxDepth` | `6` | Maximum derivation depth (number of `DelayedExp`/`AltExp` descents). |
+| `maxRecursion` | `2` | Max times a single recursive `DelayedExp` may be re-entered on the current path. |
+| `seed` | `0` | Random seed for reproducible generation. Same seed → same output. |
+| `alphabet` | alphanumeric + ws | Character alphabet for sampling predicate-based terminals. |
+| `maxBacktracks` | `50` | Max backtracks before giving up on a branch. |
+| `maxSteps` | `10000` | Total walk-step cap (safety net against infinite loops). |
+| `branchStrategy` | `"depth-first"` | Branch ordering: `"depth-first"` (recursive branches first — maximal L-system expansion), `"breadth-first"` (terminals first — minimal derivation), or `"random"` (shuffled — diverse PBT samples). |
+
+### Generating from a named production
+
+`generateFrom(ruleName, args?, options?)` resolves a `@rule` production
+reflectively — including parameterised (method) productions:
+
+```ts
+const { value } = g.generateFrom('term', [], { seed: 0, maxDepth: 3 });
+```
+
+### Unparsing (inverse parsing)
+
+`Grammar.unparse(tree)` converts a `DerivationTree` back to source text. The
+default `UnparsePass` reconstructs from spans (zero-config); for
+pretty-printing, subclass `SemanticPass<string>` and override methods named
+after production labels:
+
+```ts
+const { trees } = g.parseToTree('1+2*3');
+g.unparse(trees[0]);  // → "1+2*3"
+```
+
+### Native property-based testing
+
+`Grammar.toGenerator(options)` builds a `ValueGenerator` with
+**grammar-aware shrinking**. Shrinking
+re-generates at shallower depths, producing structurally smaller
+counterexamples that stay well-formed:
+
+```ts
+const gen = g.toGenerator({ maxDepth: 5 });
+gen.forAll((n) => typeof n === 'number' && Number.isFinite(n), { numRuns: 100 });
+// Throws PropertyFailure with a minimized counterexample if the property fails.
+```
+
+## First-class inference rules
+
+Grammars that annotate `@requires`/`@ensures` with `meta.rule` (the
+inference-rule convention) get first-class `InferenceRule` objects via
+`Grammar.rules`:
+
+```ts
+const rules = STLCTypeCheck.rules;
+const tApp = rules.find(r => r.name === 'T-App');
+tApp.premises;    // [{ formula: "fn : σ → τ  ∧  arg <: σ", ... }]
+tApp.conclusion;  // [{ formula: "result : τ", ... }]
+tApp.production;  // "appProd"
+```
+
+Each rule has a `format()` method that renders it in standard proof-tree
+notation — premises above the bar, conclusion below, with the rule name
+labeling the line. Conjoined premises (`∧`) are split into the traditional
+horizontal spacing:
+
+```ts
+console.log(tApp.format());
+// fn : σ → τ    arg <: σ
+// ──────────────────────────  T-App  (appProd)
+// result : τ
+```
+
+This is an opt-in interpretive layer over the schema-less `ContractMeta` —
+grammars that don't follow the convention return an empty array. First-class
+rules enable type-directed generation and static metatheory analysis.
+
 ## References
 
 - Pierce Darragh & Michael D. Adams,
