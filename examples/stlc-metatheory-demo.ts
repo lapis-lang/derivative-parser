@@ -103,5 +103,5 @@ console.log(
   "strengthens Preservation with automated implication checking; the",
 );
 console.log(
-  "generative layer searches for concrete counterexamples via the #35 generator.",
+  "generative layer searches for concrete counterexamples via the grammar generator.",
 );
