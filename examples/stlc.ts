@@ -208,6 +208,29 @@ export class TypedInt extends TypedTerm {
 export type Value = Closure | boolean | number;
 
 /**
+ * Value classification for the dynamic semantics. A term is a *value* (a
+ * normal form that needs no further evaluation) iff it is a closure, a
+ * boolean, or a number. Used by the metatheory engine (#38) to partition
+ * terms into values vs. non-values for the **Progress** check
+ * ($\\text{Well-Typed} \\implies \\text{Value} \\lor \\text{Can Step}$).
+ */
+export function isValue(v: Value): boolean {
+  return v instanceof Closure || typeof v === "boolean" ||
+    typeof v === "number";
+}
+
+/**
+ * Like {@link isValue} but also accepts the `PLACEHOLDER` sentinel used
+ * during lambda body span capture. The metatheory `@ensures` predicates use
+ * this so runtime contract checking doesn't reject the placeholder bound
+ * during the span-capture pass (the placeholder is never a real result —
+ * only the span is kept).
+ */
+export function isValueOrPlaceholder(v: Value): boolean {
+  return isValue(v) || typeof v === "symbol";
+}
+
+/**
  * Sentinel placeholder value used when parsing a lambda body for span
  * capture. The body is parsed under an env where the parameter is bound to
  * this sentinel, so `varRef` succeeds (the value is never used — only the
@@ -784,7 +807,31 @@ export class STLCEval
    * and `ρ' ⊢ body[x:=v₂] ⇓ v`.  The body re-evaluation re-parses the
    * closure's body substring under `ρ'.extend(x, v₂)` — the higher-order
    * attribute.
+   *
+   * Dynamic-semantics step rule E-App: the function position must evaluate
+   * to a closure (a value), and the body must evaluate under the extended
+   * environment. The `@requires` premise states the function is a closure;
+   * the `@ensures` conclusion states the result is a value.
    */
+  @requires(
+    (_self, fn, _arg) => fn instanceof Closure,
+    {
+      rule: "E-App",
+      role: "premise",
+      formula: "ρ ⊢ e₁ ⇓ ⟨x,τ,span,ρ'⟩",
+      description:
+        "the function position evaluates to a closure (a value)",
+    },
+  )
+  @ensures(
+    (_self, _args, _old, result) => isValueOrPlaceholder(result),
+    {
+      rule: "E-App",
+      role: "conclusion",
+      formula: "ρ ⊢ e₁ e₂ ⇓ v",
+      description: "the application evaluates to a value",
+    },
+  )
   protected override app(fn: Value, arg: Value): Value {
     if (!(fn instanceof Closure)) throw new Error(`cannot apply non-function`);
     const bodyEnv = fn.env.extend(fn.param, arg);
@@ -805,19 +852,114 @@ export class STLCEval
     }
   }
 
+  /**
+   * Dynamic-semantics step rule E-Var: the variable must be bound in the
+   * value environment; the result is the bound value.
+   */
+  @requires(
+    (_self, name, ctx) =>
+      ctx instanceof ValEnv && ctx.lookup(name) !== undefined,
+    {
+      rule: "E-Var",
+      role: "premise",
+      formula: "ρ(x) = v",
+      description: "the variable must be bound in the value environment",
+    },
+  )
+  @ensures(
+    (_self, _args, _old, result) => isValueOrPlaceholder(result),
+    {
+      rule: "E-Var",
+      role: "conclusion",
+      formula: "ρ ⊢ x ⇓ v",
+      description: "the variable evaluates to its bound value",
+    },
+  )
   protected override varRef(name: string, ctx: unknown): Value {
     const v = (ctx as ValEnv).lookup(name);
     if (v === undefined) throw new Error(`unbound variable: ${name}`);
     return v;
   }
+
+  /**
+   * Dynamic-semantics value rule E-Bool: a boolean literal is a value.
+   */
+  @ensures(
+    (_self, _args, _old, result) => typeof result === "boolean",
+    {
+      rule: "E-Bool",
+      role: "conclusion",
+      formula: "b ⇓ b",
+      description: "a boolean literal is a value",
+    },
+  )
   protected override boolLit(b: boolean): Value {
     return b;
   }
+
+  /**
+   * Dynamic-semantics value rule E-Int: an integer literal is a value.
+   */
+  @ensures(
+    (_self, _args, _old, result) => typeof result === "number",
+    {
+      rule: "E-Int",
+      role: "conclusion",
+      formula: "n ⇓ n",
+      description: "an integer literal is a value",
+    },
+  )
   protected override intLit(n: number): Value {
     return n;
   }
+
   protected override paren(e: Value): Value {
     return e;
+  }
+
+  /**
+   * Dynamic-semantics value rule E-Abs conclusion: a lambda abstraction
+   * evaluates to a closure (a value). This action is never called at runtime
+   * (`lambdaProd` is overridden to capture the body span), but its
+   * `@ensures` metadata is read by `collectRules` to expose the E-Abs
+   * conclusion for the metatheory engine (#38).
+   */
+  @ensures(
+    (_self, _args, _old, result) => isValueOrPlaceholder(result),
+    {
+      rule: "E-Abs",
+      role: "conclusion",
+      formula: "λx:τ. body ⇓ ⟨x,τ,span,ρ⟩",
+      description: "a lambda abstraction evaluates to a closure (a value)",
+    },
+  )
+  protected override lam(_param: string, _type: Type, _body: Value): Value {
+    throw new Error("lam() unreachable — lambdaProd is overridden");
+  }
+
+  /**
+   * Dynamic-semantics step rule E-Let conclusion: a let-binding evaluates to
+   * the body's value. This action is never called at runtime (`letProd` is
+   * overridden to thread the def value), but its `@ensures` metadata is read
+   * by `collectRules` to expose the E-Let conclusion for the metatheory
+   * engine (#38).
+   */
+  @ensures(
+    (_self, _args, _old, result) => isValueOrPlaceholder(result),
+       {
+      rule: "E-Let",
+      role: "conclusion",
+      formula: "ρ ⊢ let x:τ = def in body ⇓ v",
+      description: "the let-binding evaluates to the body's value",
+    },
+  )
+  protected override let_(
+    _name: string,
+    _type: Type,
+    _def: Value,
+    _body: Value,
+  ): Value {
+    throw new Error("let_() unreachable — letProd is overridden");
   }
 
   /**
@@ -826,8 +968,13 @@ export class STLCEval
    * env (so `x` is bound and the parse succeeds), but only the **span** is
    * kept — the body's value is discarded. The real evaluation happens when
    * the closure is applied (`app` re-parses the substring).
+   *
+   * Dynamic-semantics value rule E-Abs: a lambda abstraction evaluates to a
+   * closure (a value). The production is tagged with the E-Abs rule name so
+   * `collectRules` links it to the E-Abs conclusion (declared on the `lam`
+   * action override below).
    */
-  @rule
+  @rule({ rule: "E-Abs", production: "lambdaProd" })
   protected override lambdaProd(ctx: unknown): Parser<Value> {
     return seq(
       this.sseq(
@@ -867,8 +1014,13 @@ export class STLCEval
    * def's value). Unlike `lambdaProd`, the body is evaluated in the same
    * pass — `def`'s value is available from the `chain`, so the body parser
    * runs under `ρ[name:=def]` directly. No span capture or `_forward` needed.
+   *
+   * Dynamic-semantics step rule E-Let: `def` evaluates to a value `v₁`, then
+   * the body evaluates under `ρ[x:=v₁]`. The production is tagged with the
+   * E-Let rule name so `collectRules` links it to the E-Let conclusion
+   * (declared on the `let_` action override below).
    */
-  @rule
+  @rule({ rule: "E-Let", production: "letProd" })
   protected override letProd(ctx: unknown): Parser<Value> {
     return seq(
       literal("let"),

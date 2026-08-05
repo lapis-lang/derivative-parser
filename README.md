@@ -1010,6 +1010,75 @@ This is an opt-in interpretive layer over the schema-less `ContractMeta` —
 grammars that don't follow the convention return an empty array. First-class
 rules enable type-directed generation and static metatheory analysis.
 
+## Metatheory Verification
+
+LangForma can verify metatheoretic properties of a grammar's semantics —
+**Progress** and **Preservation** (Subject Reduction) — by analyzing the
+grammar class itself, without requiring manual proof-assistant code (Coq/Lean).
+
+The engine has three layers:
+
+1. **Static analysis** (`Grammar.metatheory`): pure analysis over the
+   first-class `InferenceRule[]` model. Partitions dynamic-semantics rules
+   into value-rules (normal forms) and step-rules (transitions), then checks
+   Progress (exhaustiveness) and Preservation (type consistency)
+   syntactically.
+2. **SMT implication checking** (`verifyPreservationSmt`): strengthens
+   Preservation with Z3-based automated implication checking. Encodes
+   type-equality constraints from rule metadata and asks Z3 whether the
+   premises imply the conclusion.
+3. **Generative counterexample search** (`findCounterexamples`): uses the
+   #35 generator to synthesize well-formed terms and check Progress and
+   Preservation dynamically, shrinking any counterexample to a minimal form.
+
+### Annotating dynamic semantics
+
+To verify Progress and Preservation, the dynamic-semantics rules (evaluation
+judgments `ρ ⊢ e ⇓ v`) must be annotated with `@requires`/`@ensures` metadata
+following the `rule`/`role`/`formula` convention, just like the static
+semantics:
+
+```ts
+@requires(
+  (_self, fn, _arg) => fn instanceof Closure,
+  { rule: "E-App", role: "premise", formula: "ρ ⊢ e₁ ⇓ ⟨x,τ,span,ρ'⟩" },
+)
+@ensures(
+  (_self, _args, _old, result) => isValueOrPlaceholder(result),
+  { rule: "E-App", role: "conclusion", formula: "ρ ⊢ e₁ e₂ ⇓ v" },
+)
+protected override app(fn: Value, arg: Value): Value { ... }
+```
+
+Rules with no premises are classified as **value-rules** (normal forms);
+rules with premises are **step-rules** (transitions). The `meta.kind` key
+can override this heuristic.
+
+### Verifying a grammar
+
+```ts
+import { STLCEval, STLCTypeCheck } from './examples/stlc.ts';
+
+// Static analysis (no SMT, no generation):
+const report = STLCEval.metatheory;
+console.log(report.progress.holds);    // true
+console.log(report.preservation.holds); // true
+
+// SMT-backed Preservation (requires --allow-read for the z3 WASM):
+import { verifyPreservationSmt, initZ3, collectRules } from '../src/index.ts';
+await initZ3();
+const smtResult = await verifyPreservationSmt(collectRules(STLCTypeCheck));
+
+// Generative counterexample search:
+import { findCounterexamples } from '../src/index.ts';
+const ev = new STLCEval();
+const tc = new STLCTypeCheck();
+const search = findCounterexamples(ev, tc, { numRuns: 100, seed: 42 });
+console.log(search.passed); // true
+```
+
+See `examples/stlc-metatheory-demo.ts` for a full demonstration.
+
 ## References
 
 - Pierce Darragh & Michael D. Adams,
@@ -1023,6 +1092,12 @@ rules enable type-directed generation and static metatheory analysis.
 - [decorator-contracts](https://github.com/final-hill/decorator-contracts) — the inspiration for the grammar-native contracts system.
 - [Design by Contract](https://en.wikipedia.org/wiki/Design_by_contract),
   [Liskov Substitution Principle](https://en.wikipedia.org/wiki/Liskov_substitution_principle).
+- [AutoProof Verifier (ETH Zürich)](https://se.inf.ethz.ch/research/autoproof/) —
+  inspiration for the bounded-unrolling contract→SMT technique.
+- [`z3-solver` TypeScript bindings](https://www.npmjs.com/package/z3-solver) —
+  the Z3 theorem prover compiled to WebAssembly, used for SMT-based
+  Preservation checking.
+- [PLT Redex (Racket Metatheory Framework)](https://redex.racket-lang.org/).
 
 ## License
 

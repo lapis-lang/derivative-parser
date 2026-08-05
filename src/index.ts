@@ -99,6 +99,40 @@ export type {
   RuleRole,
 } from "./rules.ts";
 
+/* ── Metatheory verification ── */
+export {
+  checkPreservation,
+  checkProgress,
+  classifyRule,
+  classifyRules,
+  verifyMetatheory,
+} from "./metatheory.ts";
+export type {
+  ClassifiedRule,
+  MetatheoryReport,
+  PreservationCheck,
+  PreservationResult,
+  ProgressGap,
+  ProgressResult,
+  RuleKind,
+} from "./metatheory.ts";
+
+/* ── Generative counterexample search ── */
+export { findCounterexamples } from "./counterexamples.ts";
+export type {
+  Counterexample,
+  CounterexampleOptions,
+  CounterexampleResult,
+} from "./counterexamples.ts";
+
+/* ── SMT-based implication checking (z3-solver) ── */
+export {
+  checkImplication,
+  initZ3,
+  verifyPreservationSmt,
+} from "./smt.ts";
+export type { SmtResult, SmtStatus, Z3Api } from "./smt.ts";
+
 /* ── Top-down generation ── */
 export { DEFAULT_ALPHABET, GenerationError, Generator } from "./generate.ts";
 export type {
