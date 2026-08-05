@@ -1070,8 +1070,7 @@ console.log(report.progress.holds);    // true
 console.log(report.preservation.holds); // true
 
 // Unification-backed Preservation (strengthens the static check):
-import { verifyPreservation } from '@lapis-lang/lang-forma';
-const result = verifyPreservation(STLCTypeCheck);
+const result = STLCTypeCheck.preservation;
 
 // Generative counterexample search:
 import { findCounterexamples } from '@lapis-lang/lang-forma';

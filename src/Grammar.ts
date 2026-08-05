@@ -13,6 +13,8 @@ import {
 } from "./contracts.ts";
 import { collectRules, type FormattedInferenceRule } from "./rules.ts";
 import { verifyMetatheory, type MetatheoryReport } from "./metatheory.ts";
+import type { PreservationResult } from "./metatheory.ts";
+import { verifyPreservation } from "./unify.ts";
 import {
   GenerationError,
   Generator,
@@ -169,6 +171,21 @@ export abstract class Grammar<S extends GrammarShape = GrammarShape> {
    */
   static get metatheory(): MetatheoryReport {
     return verifyMetatheory(this);
+  }
+
+  /**
+   * Verify Preservation (Subject Reduction) of this grammar class's rules
+   * using unification-based type checking. Strengthens the syntactic
+   * Preservation check in {@link metatheory} with yield-kanren unification:
+   * parses type tokens from rule metadata into terms and checks whether
+   * the conclusion's type unifies with any premise's type.
+   *
+   * Pure TypeScript — no external dependencies.
+   *
+   * @returns The Preservation check result.
+   */
+  static get preservation(): PreservationResult {
+    return verifyPreservation(this);
   }
 
   /* ---- sigspace ---- */

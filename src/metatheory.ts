@@ -17,7 +17,7 @@
  *
  * This is the **rule-structure-first** layer of the metatheory engine: pure
  * static analysis over `InferenceRule[]`, no unification. The unification
- * layer (`verifyPreservation`) strengthens Preservation with
+ * layer (`Grammar.preservation`) strengthens Preservation with
  * automated implication checking; the generative layer searches for
  * counterexamples via the grammar generator.
  *
@@ -299,7 +299,7 @@ function clauseType(clause: RuleClause): string | undefined {
  * strings, this is a *syntactic* consistency check: it verifies that a
  * type appears in both the premise and the conclusion (or that no type is
  * declared, in which case the check is vacuous). The unification layer
- * (`verifyPreservation`) strengthens this with unification-based
+ * (`Grammar.preservation`) strengthens this with unification-based
  * implication checking.
  *
  * When `staticRules` (the typing rules, e.g. from `collectRules(STLCTypeCheck)`)

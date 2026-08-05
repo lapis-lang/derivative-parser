@@ -145,9 +145,6 @@ export {
 } from "./kanren.ts";
 export type { Goal, LogicValue } from "./kanren.ts";
 
-/* ── Unification-based Preservation verification ── */
-export { verifyPreservation } from "./unify.ts";
-
 /* ── Top-down generation ── */
 export { DEFAULT_ALPHABET, GenerationError, Generator } from "./generate.ts";
 export type {
