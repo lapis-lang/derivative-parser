@@ -134,25 +134,26 @@ function checkImplication(
     };
   }
 
-  // Parse the conclusion type and each premise type into Terms, then
-  // check if the conclusion type unifies with any premise type.
-  const conclusionTerm = parseType(conclusionTypes[0]!);
-
-  for (const premiseType of premiseTypes) {
-    const premiseTerm = parseType(premiseType);
-    if (runExists(eq(conclusionTerm, premiseTerm))) {
-      return {
-        valid: true,
-        explanation:
-          `conclusion type "${conclusionTypes[0]}" unifies with premise type "${premiseType}"`,
-      };
+  // Parse each conclusion type and each premise type into Terms, then
+  // check if any conclusion type unifies with any premise type.
+  for (const conclusionType of conclusionTypes) {
+    const conclusionTerm = parseType(conclusionType);
+    for (const premiseType of premiseTypes) {
+      const premiseTerm = parseType(premiseType);
+      if (runExists(eq(conclusionTerm, premiseTerm))) {
+        return {
+          valid: true,
+          explanation:
+            `conclusion type "${conclusionType}" unifies with premise type "${premiseType}"`,
+        };
+      }
     }
   }
 
   return {
     valid: false,
     explanation:
-      `conclusion type "${conclusionTypes[0]}" does not unify with any premise type [${premiseTypes.join(", ")}]`,
+      `conclusion type(s) [${conclusionTypes.join(", ")}] do not unify with any premise type [${premiseTypes.join(", ")}]`,
   };
 }
 
