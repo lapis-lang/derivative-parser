@@ -4,7 +4,7 @@
  *
  * Uses the grammar generator to synthesize well-formed terms, then checks
  * Progress and Preservation dynamically. This complements the static
- * analysis (`src/metatheory.ts`) and SMT (`src/smt.ts`) layers: where they
+ * analysis (`src/metatheory.ts`) and unification (`src/smt.ts`) layers: where they
  * reason about the rule *structure*, this layer tests the *behavior* on
  * concrete terms.
  *

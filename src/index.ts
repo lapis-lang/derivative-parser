@@ -125,8 +125,28 @@ export type {
   CounterexampleResult,
 } from "./counterexamples.ts";
 
-/* ── SMT-based implication checking (z3-solver) ── */
-export { verifyPreservationSmt } from "./smt.ts";
+/* ── Yield-Kanren (relational unification engine) ── */
+export {
+  atom,
+  conj,
+  conjAll,
+  disj,
+  disjAll,
+  eq,
+  fresh,
+  parseType,
+  run,
+  runExists,
+  Substitution,
+  term,
+  Term,
+  unify,
+  Var,
+} from "./kanren.ts";
+export type { Goal, LogicValue } from "./kanren.ts";
+
+/* ── Unification-based Preservation verification ── */
+export { verifyPreservation } from "./smt.ts";
 
 /* ── Top-down generation ── */
 export { DEFAULT_ALPHABET, GenerationError, Generator } from "./generate.ts";

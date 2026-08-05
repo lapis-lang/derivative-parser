@@ -13,7 +13,7 @@ import {
   collectRules,
   findCounterexamples,
   verifyMetatheory,
-  verifyPreservationSmt,
+  verifyPreservation,
 } from "../src/index.ts";
 import { STLCEval, STLCTypeCheck } from "./stlc.ts";
 
@@ -54,17 +54,17 @@ if (report.progress.gaps.length > 0) {
 
 /* ── Phase 2: SMT-based implication checking ───────────────────────── */
 
-console.log("\n-- Phase 2: SMT Implication Checking (verifyPreservationSmt) --\n");
+console.log("\n-- Phase 2: Unification Checking (verifyPreservation) --\n");
 
 console.log("  STLCTypeCheck (T-* typing rules):");
-const tcResult = await verifyPreservationSmt(STLCTypeCheck);
+const tcResult = verifyPreservation(STLCTypeCheck);
 for (const c of tcResult.checks) {
   console.log(
     `    ${c.rule}: ${c.preserves ? "✓" : "✗"} — ${c.explanation}`,
   );
 }
 
-const evResult = await verifyPreservationSmt(STLCEval);
+const evResult = verifyPreservation(STLCEval);
 console.log("\n  STLCEval (E-* step rules):");
 for (const c of evResult.checks) {
   console.log(
@@ -97,10 +97,10 @@ console.log(
   "\nThe metatheory engine confirms Progress and Preservation hold for STLC.",
 );
 console.log(
-  "The static analysis verifies rule-structure completeness; the SMT layer",
+  "The static analysis verifies rule-structure completeness; the unification layer",
 );
 console.log(
-  "strengthens Preservation with automated implication checking; the",
+  "strengthens Preservation with type-equality checking; the",
 );
 console.log(
   "generative layer searches for concrete counterexamples via the grammar generator.",

@@ -1040,10 +1040,10 @@ The engine has three layers:
    into value-rules (normal forms) and step-rules (transitions), then checks
    Progress (exhaustiveness) and Preservation (type consistency)
    syntactically.
-2. **SMT implication checking** (`verifyPreservationSmt`): strengthens
-   Preservation with Z3-based automated implication checking. Encodes
-   type-equality constraints from rule metadata and asks Z3 whether the
-   premises imply the conclusion.
+2. **Unification-based implication checking** (`verifyPreservation`): strengthens
+   Preservation with yield-kanren unification. Parses type tokens from rule
+   metadata into terms, then checks whether the conclusion's type unifies
+   with any premise's type. Pure TypeScript — no external dependencies.
 3. **Generative counterexample search** (`findCounterexamples`): uses the
    grammar generator to synthesize well-formed terms and check Progress and
    Preservation dynamically, shrinking any counterexample to a minimal form.
@@ -1096,10 +1096,9 @@ const report = STLCEval.metatheory;
 console.log(report.progress.holds);    // true
 console.log(report.preservation.holds); // true
 
-// SMT-backed Preservation (Z3 is initialised lazily; under Deno, pass
-// --allow-read so the Z3 WASM module can be loaded):
-import { verifyPreservationSmt } from '@lapis-lang/lang-forma';
-const smtResult = await verifyPreservationSmt(STLCTypeCheck);
+// Unification-backed Preservation (pure TypeScript, no external deps):
+import { verifyPreservation } from '@lapis-lang/lang-forma';
+const unifyResult = verifyPreservation(STLCTypeCheck);
 
 // Generative counterexample search:
 import { findCounterexamples } from '@lapis-lang/lang-forma';
@@ -1126,9 +1125,11 @@ See `examples/stlc-metatheory-demo.ts` for a full demonstration.
   [Liskov Substitution Principle](https://en.wikipedia.org/wiki/Liskov_substitution_principle).
 - [AutoProof Verifier (ETH Zürich)](https://se.inf.ethz.ch/research/autoproof/) —
   inspiration for the bounded-unrolling contract→SMT technique.
-- [`z3-solver` TypeScript bindings](https://www.npmjs.com/package/z3-solver) —
-  the Z3 theorem prover compiled to WebAssembly, used for SMT-based
-  Preservation checking.
+- [microKanren (Hemann & Friedman, 2013)](https://github.com/jasonhemann/microKanren) —
+  the minimal relational programming core that inspired the yield-kanren engine.
+- [Yield Prolog](https://yieldprolog.sourceforge.net/) —
+  generator-based backtracking with `yield`/`for...of`, the synthesis insight
+  behind yield-kanren.
 - [PLT Redex (Racket Metatheory Framework)](https://redex.racket-lang.org/).
 
 ## License

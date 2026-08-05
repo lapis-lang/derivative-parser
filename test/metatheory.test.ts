@@ -16,7 +16,7 @@ import {
   collectRules,
   findCounterexamples,
   verifyMetatheory,
-  verifyPreservationSmt,
+  verifyPreservation,
 } from "../src/index.ts";
 import { MathEval } from "../examples/arith.ts";
 import {
@@ -123,17 +123,17 @@ Deno.test("Phase 1 — Progress gap detected for rule with no conclusion", () =>
   assert(result.gaps.some((g) => g.rule === "T-Var"));
 });
 
-/* ── Phase 2: SMT-based implication checking ───────────────────────── */
+/* ── Phase 2: Unification-based implication checking ─────────────── */
 
-Deno.test("Phase 2 — verifyPreservationSmt on STLCEval (vacuous)", async () => {
-  const result = await verifyPreservationSmt(STLCEval);
+Deno.test("Phase 2 — verifyPreservation on STLCEval (vacuous)", () => {
+  const result = verifyPreservation(STLCEval);
   // E-* rules have no type annotations → vacuous → treated as passing.
   assert(result.holds);
 });
 
-Deno.test("Phase 2 — verifyPreservationSmt on STLCTypeCheck", async () => {
-  const result = await verifyPreservationSmt(STLCTypeCheck);
-  // T-App passes (τ ∈ {σ, τ}); T-Var has no conclusion → fails.
+Deno.test("Phase 2 — verifyPreservation on STLCTypeCheck", () => {
+  const result = verifyPreservation(STLCTypeCheck);
+  // T-App passes (τ unifies with σ or τ); T-Var has no conclusion → fails.
   const tAppCheck = result.checks.find((c) => c.rule === "T-App");
   assertExists(tAppCheck);
   assert(tAppCheck!.preserves);

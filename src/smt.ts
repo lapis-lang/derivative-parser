@@ -1,34 +1,32 @@
 /**
- * SMT-based contract implication checking — the strengthening layer of the
+ * Unification-based implication checking — the strengthening layer of the
  * metatheory engine.
  *
- * The static analysis layer (`src/metatheory.ts`) checks Progress and
- * Preservation syntactically over the `InferenceRule[]` structure. This
- * module strengthens Preservation with automated implication checking via
- * the Z3 SMT solver (`z3-solver`, compiled to WebAssembly).
+ * Uses the yield-kanren engine (`src/kanren.ts`) to check whether the
+ * conclusion of an inference rule is implied by its premises via
+ * unification. This replaces the earlier Z3-based SMT layer with a
+ * pure-TypeScript implementation that works on all JS runtimes (Deno,
+ * Node, Bun, Cloudflare Workers, browsers) — no WASM, no
+ * `SharedArrayBuffer`, no file loading.
  *
  * ## Approach
  *
  * The contract predicates (`@requires` / `@ensures`) are opaque TypeScript
- * functions — they cannot be directly translated to SMT. Instead, the SMT
- * layer works on the **declarative metadata**: the `formula` strings and
- * any structured type metadata attached to the rule clauses. For a
+ * functions — they cannot be directly translated to logic goals. Instead,
+ * this module works on the **declarative metadata**: the `formula` strings
+ * and any structured type metadata attached to the rule clauses. For a
  * type-system grammar (like STLC), the key Preservation invariant is:
  *
  * $$\Gamma \vdash e : \tau \land e \to e' \implies \Gamma \vdash e' : \tau$$
  *
- * The SMT layer encodes the type-equality constraints from the typing
- * rules (T-*) and the step rules (E-*) as uninterpreted functions over
- * sort `Type`, then asks Z3 whether the premises imply the conclusion.
- * If `premises ∧ ¬conclusion` is **unsat**, the implication holds.
+ * The unification layer parses the type tokens from the formula strings
+ * into `Term`s (e.g. `"σ → τ"` → `term("→", atom("σ"), atom("τ"))`), then
+ * uses `unify` to check whether the conclusion's type unifies with any
+ * premise's type. If unification succeeds, the implication holds.
  *
- * ## AutoProof inspiration
- *
- * The bounded inlining / unrolling technique (from AutoProof, ETH Zürich)
- * is used for recursive rules: a step-rule's premises are inlined up to a
- * bounded depth before the SMT check, so recursive type-equality chains
- * are flattened. This is the only AutoProof technique adopted — the
- * two-step verification workflow is not.
+ * Unlike the earlier string-equality check, unification handles
+ * **recursive types** properly: `σ → τ` unifies with `Int → Bool` (with
+ * `σ = Int`, `τ = Bool`), and `σ → τ` unifies with `σ → τ` (trivially).
  *
  * @module
  */
@@ -37,111 +35,28 @@ import type { RuleClause } from "./rules.ts";
 import { collectRules } from "./rules.ts";
 import { classifyRules } from "./metatheory.ts";
 import type { PreservationResult, PreservationCheck } from "./metatheory.ts";
+import {
+  parseType,
+  runExists,
+  unify,
+  type LogicValue,
+  type Substitution,
+} from "./kanren.ts";
 
 /* ======================================================================
- *  Z3 initialization (lazy singleton)
- * ====================================================================== */
-
-/**
- * The initialized Z3 high-level API. Opaque type — the actual Z3 bindings
- * are only available at runtime via {@link initZ3}. The type is kept
- * opaque so the `z3-solver` TypeScript types don't pollute the global
- * type space and interfere with decorator type resolution in other
- * modules.
- */
-type Z3Api = {
-  /** The Z3 context factory (high-level, Z3Py-like API). */
-  Context: new <Name extends string>(name: Name) => unknown;
-};
-
-/** The Z3 context type (opaque). */
-type Z3Context = {
-  Solver: new () => unknown;
-  String: {
-    const: (name: string) => unknown;
-    val: (s: string) => unknown;
-  };
-  Eq: (a: unknown, b: unknown) => unknown;
-  Not: (b: unknown) => unknown;
-  Or: (...bools: unknown[]) => unknown;
-};
-
-/** A Z3 solver (opaque). */
-interface Z3Solver {
-  add: (constraint: unknown) => void;
-  check: () => Promise<"sat" | "unsat" | "unknown">;
-  model: () => {
-    get: (ast: unknown) => { toString(): string } | undefined;
-  };
-}
-
-let z3ApiPromise: Promise<Z3Api> | null = null;
-
-/**
- * Initialize the Z3 SMT solver (lazy singleton). The WASM module is loaded
- * on first call; subsequent calls return the cached API. Uses
- * `import.meta.resolve` to locate the WASM artifacts, which works under
- * Deno 2.1+.
- *
- * The `z3-solver` dependency is imported dynamically via the full `npm:`
- * specifier (not the import map) so its TypeScript types don't pollute the
- * global type space and interfere with decorator type resolution in other
- * modules.
- *
- * @returns The Z3 high-level API (`Context` factory).
- */
-function initZ3(): Promise<Z3Api> {
-  if (z3ApiPromise) return z3ApiPromise;
-  z3ApiPromise = (async () => {
-    // Use a computed specifier so Deno's type-checker doesn't statically
-    // resolve the z3-solver types (which declare globals that interfere
-    // with decorator type resolution in other modules). The specifier is
-    // resolved at runtime only.
-    const specifier = "npm:z3-solver";
-    const mod = await import(specifier);
-    const api = await mod.init({
-      locateFile: (file: string, _prefix: string): string =>
-        import.meta.resolve(`npm:z3-solver/build/${file}`),
-    });
-    // Cast to the opaque Z3Api type to avoid leaking z3-solver's types.
-    return api as unknown as Z3Api;
-  })();
-  return z3ApiPromise;
-}
-
-/* ======================================================================
- *  SMT result types
- * ====================================================================== */
-
-/** The outcome of an SMT implication check. */
-type SmtStatus = "valid" | "invalid" | "unknown";
-
-/** The result of an SMT implication check. */
-interface SmtResult {
-  /** The outcome: `valid` if the implication holds (premises ⊢ conclusion). */
-  status: SmtStatus;
-  /**
-   * A counterexample model when `status` is `"invalid"` (the premises hold
-   * but the conclusion does not). `undefined` when `valid` or `unknown`.
-   */
-  counterexample?: Record<string, string>;
-  /** Human-readable explanation of the check outcome. */
-  explanation: string;
-}
-
-/* ======================================================================
- *  Type-equality encoding
+ *  Type extraction
  * ====================================================================== */
 
 /**
  * Extract type-equality constraints from a rule clause's metadata. For
  * STLC-style grammars, the `meta.type` key (or `: τ` patterns in the
  * formula) carries the type. This function collects all type tokens
- * mentioned in a clause, so the SMT encoder can build equality constraints.
+ * mentioned in a clause, so the unification engine can build equality
+ * constraints.
  *
  * Extraction order:
  * 1. **Explicit `meta.type`** (string or array of strings) — the structured
- *    form preferred by the SMT encoder.
+ *    form preferred by the unification engine.
  * 2. **Formula parsing** — extract type-variable tokens after `:` or `<:`
  *    in the formula string. Splits arrow types (`σ → τ`) into components.
  *    Does not scan for Greek letters outside type-annotation positions,
@@ -178,110 +93,106 @@ function clauseTypeTokens(clause: RuleClause): string[] | undefined {
 }
 
 /* ======================================================================
- *  SMT implication check
+ *  Unification-based implication check
  * ====================================================================== */
 
+/** The result of a unification-based implication check. */
+interface UnifyResult {
+  /** `true` if the implication holds (conclusion type unifies with a premise type). */
+  valid: boolean;
+  /** Human-readable explanation of the check outcome. */
+  explanation: string;
+}
+
 /**
- * Check whether `premises` imply `conclusion` via Z3: i.e. whether
- * `premises ∧ ¬conclusion` is unsatisfiable.
+ * Check whether `premises` imply `conclusion` via unification: i.e. whether
+ * the conclusion's type unifies with any premise's type.
  *
- * Each clause contributes type-equality constraints (extracted from
- * `meta.type` or the formula). The premises' type constraints are asserted
- * as assumptions; the conclusion's type constraint is negated. If Z3 reports
- * `unsat`, the implication is valid.
+ * Each clause's type tokens are parsed into `Term`s (e.g. `"σ → τ"` →
+ * `term("→", atom("σ"), atom("τ"))`). The conclusion's type is unified
+ * with each premise's type; if any unification succeeds, the implication
+ * holds.
  *
  * @param premises The premise clauses (assumed true).
  * @param conclusion The conclusion clause (to be derived).
- * @returns The SMT check result.
+ * @returns The unification check result.
  */
-async function checkImplication(
+function checkImplication(
   premises: readonly RuleClause[],
   conclusion: RuleClause,
-): Promise<SmtResult> {
+): UnifyResult {
   const premiseTypes = premises
     .map(clauseTypeTokens)
     .filter((t): t is string[] => t !== undefined)
     .flat();
   const conclusionTypes = clauseTypeTokens(conclusion);
 
-  // If no type information is available, the SMT check is vacuous.
-  if (premiseTypes.length === 0 || !conclusionTypes || conclusionTypes.length === 0) {
+  // If no type information is available, the check is vacuous.
+  if (
+    premiseTypes.length === 0 || !conclusionTypes ||
+    conclusionTypes.length === 0
+  ) {
     return {
-      status: "unknown",
+      valid: true,
       explanation:
-        "no type annotations in premises or conclusion — SMT check is vacuous",
+        "no type annotations in premises or conclusion — check is vacuous",
     };
   }
 
-  const { Context } = await initZ3();
-  const ctx = new Context("metatheory") as unknown as Z3Context;
-  const { Solver, String: Z3String, Eq, Not, Or } = ctx;
-  const solver = new Solver() as unknown as Z3Solver;
+  // Parse the conclusion type and each premise type into Terms, then
+  // check if the conclusion type unifies with any premise type.
+  const conclusionTerm = parseType(conclusionTypes[0]!);
 
-  // Bind the conclusion type to its concrete token.
-  const conclusionType = Z3String.const("conclusionType");
-  solver.add(Eq(conclusionType, Z3String.val(conclusionTypes[0]!)));
-
-  // The conclusion holds iff conclusionType equals some premise type.
-  // Negate it for the unsat check: conclusionType ≠ all premise types.
-  const conclusionHolds = Or(
-    ...premiseTypes.map((pt) => Eq(conclusionType, Z3String.val(pt))),
-  );
-  solver.add(Not(conclusionHolds));
-
-  const status = await solver.check();
-
-  if (status === "unsat") {
-    return {
-      status: "valid",
-      explanation:
-        `Z3 confirmed: premises imply conclusion (premises ∧ ¬conclusion is unsat)`,
-    };
-  }
-
-  if (status === "sat") {
-    const model = solver.model();
-    const counterexample: Record<string, string> = {};
-    counterexample["conclusionType"] = model.get(conclusionType)?.toString() ??
-      conclusionTypes[0]!;
-    counterexample["premiseTypes"] = premiseTypes.join(", ");
-    return {
-      status: "invalid",
-      explanation:
-        `Z3 found a counterexample: the conclusion type "${conclusionTypes[0]}" does not match any premise type [${premiseTypes.join(", ")}]`,
-      counterexample,
-    };
+  for (const premiseType of premiseTypes) {
+    const premiseTerm = parseType(premiseType);
+    if (runExists(unifyGoal(conclusionTerm, premiseTerm))) {
+      return {
+        valid: true,
+        explanation:
+          `conclusion type "${conclusionTypes[0]}" unifies with premise type "${premiseType}"`,
+      };
+    }
   }
 
   return {
-    status: "unknown",
-    explanation: "Z3 returned 'unknown' — the check is inconclusive",
+    valid: false,
+    explanation:
+      `conclusion type "${conclusionTypes[0]}" does not unify with any premise type [${premiseTypes.join(", ")}]`,
+  };
+}
+
+/** Wrap `unify` as a goal for `runExists`. */
+function unifyGoal(u: LogicValue, v: LogicValue) {
+  return function* (s: Substitution): Generator<Substitution> {
+    yield* unify(u, v, s);
   };
 }
 
 /* ======================================================================
- *  SMT-backed Preservation verification
+ *  Unification-backed Preservation verification
  * ====================================================================== */
 
 /**
- * Verify Preservation (Subject Reduction) using the Z3 SMT solver. For each
- * step-rule, checks that the conclusion's type is implied by the premises'
- * types via an SMT implication check.
+ * Verify Preservation (Subject Reduction) using the yield-kanren
+ * unification engine. For each step-rule, checks that the conclusion's
+ * type is implied by the premises' types via unification.
  *
- * This strengthens the syntactic {@link checkPreservation} with automated
- * implication checking. When the rules carry no type annotations, the SMT
- * check is vacuous and the result mirrors the static check.
+ * This strengthens the syntactic {@link checkPreservation} with
+ * unification-based implication checking. When the rules carry no type
+ * annotations, the check is vacuous and the result mirrors the static
+ * check.
  *
- * Z3 is initialised lazily on first call — the caller does not need to
- * manage the Z3 lifecycle. Under Deno, the Z3 WASM module requires
- * `--allow-read` permission (or `--allow-all`) to load the WASM artifact.
+ * Unlike the earlier Z3-based approach, this uses pure TypeScript with
+ * no external dependencies — it works on all JS runtimes (Deno, Node,
+ * Bun, Cloudflare Workers, browsers) without `--allow-read` or WASM
+ * loading.
  *
  * @param grammarClass The grammar class (e.g. `STLCTypeCheck`).
- * @returns The SMT-backed Preservation check result.
+ * @returns The unification-backed Preservation check result.
  */
-export async function verifyPreservationSmt(
+export function verifyPreservation(
   grammarClass: abstract new (...args: unknown[]) => unknown,
-): Promise<PreservationResult> {
+): PreservationResult {
   const rules = collectRules(grammarClass);
   const classified = classifyRules(rules);
   const stepRules = classified.filter((c) => c.kind === "step");
@@ -298,15 +209,11 @@ export async function verifyPreservationSmt(
       continue;
     }
     const conclusion = rule.conclusion[0]!;
-    const smtResult = await checkImplication(rule.premises, conclusion);
-    // A vacuous SMT check (no type annotations) is treated as passing —
-    // consistent with the static check's vacuous-true semantics. The SMT
-    // layer only strengthens checks that have type information to reason
-    // about.
+    const result = checkImplication(rule.premises, conclusion);
     checks.push({
       rule: rule.name,
-      preserves: smtResult.status === "valid" || smtResult.status === "unknown",
-      explanation: smtResult.explanation,
+      preserves: result.valid,
+      explanation: result.explanation,
     });
   }
 

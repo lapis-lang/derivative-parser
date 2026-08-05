@@ -299,8 +299,8 @@ function clauseType(clause: RuleClause): string | undefined {
  * strings, this is a *syntactic* consistency check: it verifies that a
  * type appears in both the premise and the conclusion (or that no type is
  * declared, in which case the check is vacuous). The SMT layer
- * (`verifyPreservationSmt`) strengthens this with automated implication
- * checking.
+ * (`verifyPreservation`) strengthens this with unification-based
+ * implication checking.
  *
  * When `staticRules` (the typing rules, e.g. from `collectRules(STLCTypeCheck)`)
  * are provided, the check also verifies that each step-rule's conclusion
