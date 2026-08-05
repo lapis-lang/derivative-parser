@@ -1042,7 +1042,9 @@ about sub-terms, e.g. `τ₁ = Bool`) and **frame conditions** (`@ensures`
 with `role: "frame"` — what the rule preserves, e.g. the store is
 unchanged except for `x`). When `role` is omitted, `@requires` defaults to
 `"premise"` and `@ensures` defaults to `"conclusion"` — so the common
-case needs no `role` key:
+case needs no `role` key. In `format()` output, side conditions appear as
+`if ϕ` and frame conditions as `provided ψ` on the rule-name line,
+following the separation-logic convention:
 
 ```ts
 @requires(

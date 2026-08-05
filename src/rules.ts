@@ -333,14 +333,15 @@ export function collectRules(
  * notation:
  *
  * ```text
- * premise₁   premise₂   …   side-condition
- * ─────────────────────────  ruleName
+ * premise₁   premise₂   …
+ * ─────────────────────────  ruleName  if ϕ   provided ψ
  * conclusion
  * ```
  *
- * Premises and side conditions appear above the line; the rule name and
- * production (if any) label the line; the conclusion appears below. When
- * there are no premises, the line is drawn with nothing above it (an axiom).
+ * Premises appear above the line; the conclusion appears below. Side
+ * conditions (`if ϕ`) and frame conditions (`provided ψ`) are placed on the
+ * rule-name line, following the separation-logic convention. When there
+ * are no premises, the line is drawn with nothing above it (an axiom).
  *
  * The separator line is sized to the widest content above or below it.
  *
@@ -354,8 +355,9 @@ export function collectRules(
  * ```
  */
 export function formatRule(rule: InferenceRule): string {
-  // Collect lines above the bar: premises (split on ∧ into spaced judgments)
-  // then side conditions. Below: conclusions then frame conditions.
+  // Collect lines above the bar: premises (split on ∧ into spaced judgments).
+  // Below: conclusions. Side conditions and frame conditions go on the
+  // rule-name line (separation-logic convention: "if ϕ" and "provided ψ").
   const clauseText = (c: RuleClause, fallback: string) =>
     c.formula ?? c.description ?? fallback;
   const above = [
@@ -363,18 +365,24 @@ export function formatRule(rule: InferenceRule): string {
       clauseText(p, `[${rule.name} premise]`)
         .split(/\s*∧\s*/).filter((s) => s.length > 0).join("    ")
     ),
-    ...rule.sideConditions.map((s) => clauseText(s, `[${rule.name} side]`)),
   ];
   const below = [
     ...rule.conclusion.map((c) => clauseText(c, `[${rule.name} conclusion]`)),
-    ...rule.frameConditions.map((f) => clauseText(f, `[${rule.name} frame]`)),
   ];
 
-  // The bar: a line of ─ sized to the widest content, with the rule name
-  // (and production, if linked) appended as a right-aligned label.
-  const label = rule.production
+  // Build the rule-name label with side conditions ("if ϕ") and frame
+  // conditions ("provided ψ") appended, per the separation-logic convention.
+  const namePart = rule.production
     ? `${rule.name}  (${rule.production})`
     : rule.name;
+  const sidePart = rule.sideConditions.length > 0
+    ? "  if " + rule.sideConditions.map((s) => clauseText(s, "")).join(", ")
+    : "";
+  const framePart = rule.frameConditions.length > 0
+    ? "  provided " + rule.frameConditions.map((f) => clauseText(f, "")).join(", ")
+    : "";
+  const label = namePart + sidePart + framePart;
+
   const contentWidth = Math.max(
     0,
     ...above.map((l) => l.length),
